@@ -1,6 +1,6 @@
 [project]
 name = "atlas-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Atlas shared domain model — structured drawings, elements, geometry."
 requires-python = ">=3.12"
 readme = "README.md"

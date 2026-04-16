@@ -34,6 +34,35 @@ class SheetDiscipline(StrEnum):
     TELECOMMUNICATIONS = "T"
 
 
+class IngestStatus(StrEnum):
+    """Lifecycle of a drawing as it moves through the ingest pipeline.
+
+    The order of declaration reflects the normal forward progression. A
+    drawing only ever moves forward through these states, except into the
+    terminal ``FAILED`` state which can be reached from any non-terminal
+    state.
+    """
+
+    QUEUED = "queued"
+    VALIDATING = "validating"
+    RASTERIZING = "rasterizing"
+    TILING = "tiling"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {IngestStatus.COMPLETED, IngestStatus.FAILED}
+
+    @property
+    def is_in_progress(self) -> bool:
+        return self in {
+            IngestStatus.VALIDATING,
+            IngestStatus.RASTERIZING,
+            IngestStatus.TILING,
+        }
+
+
 class ElementKind(StrEnum):
     """Top-level classification for a DrawingElement."""
 
