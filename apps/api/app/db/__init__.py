@@ -1,12 +1,11 @@
-"""SQLAlchemy layer for the API — declarative base, models, shared types.
+"""SQLAlchemy layer for the API.
 
-Kept separate from ``app.core.db`` (which owns the engine + session
-factory) so the import graph is clear: models import ``Base`` from
-``app.db.base``, and Alembic imports ``Base.metadata`` from here for
-autogenerate.
+The ORM models live in the shared ``atlas_db`` package so both the API
+and the worker reason against the same schema. This module re-exports
+the public names so existing imports (``from app.db import Drawing``)
+keep working.
 """
 
-from app.db.base import Base
-from app.db.models import Drawing, Sheet, Tile
+from atlas_db import Base, Drawing, Sheet, Tile, TimestampMixin
 
-__all__ = ["Base", "Drawing", "Sheet", "Tile"]
+__all__ = ["Base", "Drawing", "Sheet", "Tile", "TimestampMixin"]

@@ -12,9 +12,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install atlas-core first (shared package) so its layer caches
+# Install shared packages first so their layers cache across builds.
 COPY packages/atlas-core /packages/atlas-core
 RUN pip install /packages/atlas-core
+COPY packages/atlas-db /packages/atlas-db
+RUN pip install /packages/atlas-db
 
 # Then API deps
 COPY apps/api/pyproject.toml /app/pyproject.toml

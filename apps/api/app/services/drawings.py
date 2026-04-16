@@ -28,7 +28,7 @@ from app.core import events
 from app.core.config import get_settings
 from app.core.queue import enqueue_ingest
 from app.core.s3 import drawing_source_key, get_s3_client
-from app.db.models import Drawing, Sheet
+from app.db import Drawing, Sheet
 from app.schemas.errors import (
     InvalidFileError,
     MissingFileError,

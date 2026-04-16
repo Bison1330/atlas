@@ -10,11 +10,10 @@ from __future__ import annotations
 import sentry_sdk
 from redis import Redis
 from rq import Queue, Worker
+from structlog import get_logger
 
 from worker.config import WorkerSettings, get_settings
 from worker.logging import configure_logging
-
-from structlog import get_logger
 
 
 def _init_sentry(settings: WorkerSettings) -> None:

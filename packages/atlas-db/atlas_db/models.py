@@ -34,7 +34,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, TimestampMixin
+from atlas_db.base import Base, TimestampMixin
 
 _INGEST_STATUSES = ("queued", "validating", "rasterizing", "tiling", "completed", "failed")
 

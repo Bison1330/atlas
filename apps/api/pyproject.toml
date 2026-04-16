@@ -19,6 +19,7 @@ dependencies = [
     "boto3>=1.35,<2",
     "python-multipart>=0.0.12,<1",
     "atlas-core",
+    "atlas-db",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,7 @@ packages = ["app"]
 
 [tool.uv.sources]
 atlas-core = { path = "../../packages/atlas-core", editable = true }
+atlas-db = { path = "../../packages/atlas-db", editable = true }
 
 [tool.ruff]
 line-length = 100
