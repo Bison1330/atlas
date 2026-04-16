@@ -1,0 +1,49 @@
+# Atlas production reverse proxy.
+# ATLAS_DOMAIN is injected at runtime (e.g. atlas.example.com).
+# Caddy auto-provisions TLS via Let's Encrypt.
+
+{
+	email ops@{$ATLAS_DOMAIN}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$ATLAS_DOMAIN} {
+	encode zstd gzip
+
+	# API under /api/*
+	handle_path /api/* {
+		reverse_proxy api:8000 {
+			header_up X-Real-IP {remote}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# Direct health endpoints (no /api prefix) for uptime monitors
+	handle /health {
+		reverse_proxy api:8000
+	}
+	handle /health/ready {
+		reverse_proxy api:8000
+	}
+
+	# Web app catches everything else
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -1,0 +1,66 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  atlas-core:
+    name: atlas-core (pytest + ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -e "packages/atlas-core[dev]"
+      - name: Lint
+        run: ruff check packages/atlas-core
+      - name: Test
+        run: pytest packages/atlas-core/tests -v
+
+  atlas-api:
+    name: atlas-api (pytest + ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -e "packages/atlas-core[dev]"
+          pip install -e "apps/api[dev]"
+      - name: Lint
+        run: ruff check apps/api
+      - name: Test
+        working-directory: apps/api
+        run: pytest -v
+
+  atlas-web:
+    name: atlas-web (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
