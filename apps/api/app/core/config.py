@@ -30,12 +30,28 @@ class Settings(BaseSettings):
     s3_bucket: str = "atlas"
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
+    s3_drawings_prefix: str = "drawings"
+
+    # Upload limits.
+    max_upload_mb: int = Field(default=500, ge=1, le=5000)
+    allowed_upload_mime_types: str = "application/pdf"
+
+    # RQ queue names.
+    ingest_queue: str = "default"
 
     cors_origins: str = "http://localhost:3000"
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def allowed_mime_set(self) -> set[str]:
+        return {m.strip() for m in self.allowed_upload_mime_types.split(",") if m.strip()}
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
 
     @property
     def is_production(self) -> bool:

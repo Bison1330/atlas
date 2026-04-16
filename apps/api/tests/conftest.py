@@ -1,10 +1,13 @@
 """Shared fixtures for API tests.
 
-The DB fixtures require a live Postgres. When one isn't reachable at
-``TEST_DATABASE_URL`` (default: the local dev compose URL on
-``localhost:5432``), every DB-dependent test is skipped instead of
-failing — so ``pytest`` still works in a barebones CI shard that only
-wants to run the smoke tests.
+- ``engine`` is a session-scoped real Postgres connection. If unreachable,
+  every DB-dependent test is skipped (not failed).
+- ``_app_db_override`` is autouse so FastAPI's ``get_db`` dep and the
+  WebSocket endpoint's direct session factory both point at the test
+  engine. Route tests that don't insert their own rows still get DB
+  access via this override.
+- ``db`` yields a session for the test to insert/read rows directly
+  and truncates after each test for isolation.
 """
 
 from __future__ import annotations
@@ -17,7 +20,11 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core import db as core_db
+from app.core.db import get_db
 from app.db import Base
+from app.main import app
+from app.routes import websocket as ws_module
 
 DEFAULT_TEST_DB = (
     "postgresql+psycopg://atlas:d85f54872734dfd0bba0c77f074dcaf0"
@@ -43,22 +50,44 @@ def engine() -> Engine:
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema(engine: Engine) -> Iterator[None]:
-    # Idempotent — the schema is managed by Alembic. We just make sure
-    # the tables exist (create_all is a no-op if Alembic already ran) and
-    # truncate between tests.
     Base.metadata.create_all(engine)
     yield
 
 
+@pytest.fixture(scope="session")
+def _session_factory(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def _app_db_override(
+    _session_factory: sessionmaker[Session], monkeypatch
+) -> Iterator[None]:
+    """Wire the app's DB plumbing to the test engine for every test."""
+
+    def _get_db_override() -> Iterator[Session]:
+        s = _session_factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _get_db_override
+    monkeypatch.setattr(core_db, "get_session_factory", lambda: _session_factory)
+    monkeypatch.setattr(ws_module, "get_session_factory", lambda: _session_factory)
+
+    yield
+
+    app.dependency_overrides.pop(get_db, None)
+
+
 @pytest.fixture()
-def db(engine: Engine) -> Iterator[Session]:
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    session = SessionLocal()
+def db(_session_factory: sessionmaker[Session]) -> Iterator[Session]:
+    session = _session_factory()
     try:
         yield session
     finally:
         session.rollback()
-        # Clean up any rows this test inserted so the table is isolated.
         session.execute(text("TRUNCATE drawings RESTART IDENTITY CASCADE"))
         session.commit()
         session.close()

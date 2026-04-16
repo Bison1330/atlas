@@ -30,7 +30,8 @@ RUN pip install \
       "rq>=1.16,<2" \
       "structlog>=24.4,<26" \
       "sentry-sdk[fastapi]>=2.17,<3" \
-      "boto3>=1.35,<2"
+      "boto3>=1.35,<2" \
+      "python-multipart>=0.0.12,<1"
 
 COPY apps/api /app
 
