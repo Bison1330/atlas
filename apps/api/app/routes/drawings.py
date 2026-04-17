@@ -18,11 +18,13 @@ import hashlib
 from typing import Annotated
 from uuid import UUID
 
+from datetime import datetime
+
 import structlog
 from atlas_core import DrawingSummary, IngestStatus
 from fastapi import APIRouter, Depends, File, Form, Header, Request, UploadFile, status
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.core.auth_dep import current_user, owned_drawing_for_read, require_csrf
@@ -32,6 +34,7 @@ from app.services.drawings import (
     create_drawing_from_upload,
     drawing_to_summary,
     get_drawing,
+    list_readable_drawings,
 )
 
 router = APIRouter(prefix="/drawings", tags=["drawings"])
@@ -50,6 +53,38 @@ class DrawingStatus(BaseModel):
     page_count: int | None = None
 
 
+class DrawingListItem(BaseModel):
+    """One row of the drawings list (GET /drawings).
+
+    Shape tuned for the UI's dense-list layout — enough metadata
+    to render a row without a second fetch. Per-drawing sheets
+    and full detail come from ``GET /drawings/{id}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    source_filename: str
+    project_name: str | None = None
+    project_id: UUID | None = None
+    # True when the caller owns this drawing. False when they're
+    # seeing it via project membership or because it's unclaimed.
+    is_owner: bool
+    status: IngestStatus
+    progress_percent: int = Field(ge=0, le=100)
+    page_count: int | None = None
+    size_bytes: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class DrawingListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    count: int
+    drawings: list[DrawingListItem] = Field(default_factory=list)
+
+
 def _status_etag(drawing) -> str:
     """Weak ETag derived from fields that change on any state transition."""
     payload = (
@@ -58,6 +93,35 @@ def _status_etag(drawing) -> str:
     )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
     return f'W/"{digest}"'
+
+
+@router.get(
+    "",
+    response_model=DrawingListResponse,
+    summary="List drawings readable by the caller (owned, project-shared, or unclaimed).",
+)
+def list_drawings(
+    user: Annotated[User, Depends(current_user)],
+    db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
+) -> DrawingListResponse:
+    rows = list_readable_drawings(db, user.id)
+    items = [
+        DrawingListItem(
+            id=d.id,
+            source_filename=d.source_filename,
+            project_name=d.project_name,
+            project_id=d.project_id,
+            is_owner=(d.owner_id == user.id),
+            status=IngestStatus(d.status),
+            progress_percent=d.progress_percent,
+            page_count=d.page_count,
+            size_bytes=d.size_bytes,
+            created_at=d.created_at,
+            updated_at=d.updated_at,
+        )
+        for d in rows
+    ]
+    return DrawingListResponse(count=len(items), drawings=items)
 
 
 @router.post(

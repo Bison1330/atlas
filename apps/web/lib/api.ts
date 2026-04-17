@@ -234,6 +234,34 @@ export async function getDrawing(id: string, signal?: AbortSignal): Promise<Draw
   return res.json();
 }
 
+
+export interface DrawingListItem {
+  id: string;
+  source_filename: string;
+  project_name: string | null;
+  project_id: string | null;
+  is_owner: boolean;
+  status: IngestStatus;
+  progress_percent: number;
+  page_count: number | null;
+  size_bytes: number;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface DrawingListResponse {
+  count: number;
+  drawings: DrawingListItem[];
+}
+
+
+export async function listDrawings(signal?: AbortSignal): Promise<DrawingListResponse> {
+  const res = await fetchApi("/drawings", { signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
 export function previewUrl(drawingId: string, sheetId: string): string {
   return `${API_BASE}/drawings/${drawingId}/sheets/${sheetId}/preview.webp`;
 }

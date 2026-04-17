@@ -213,6 +213,48 @@ def get_drawing(db: Session, drawing_id: UUID, *, with_sheets: bool = False) -> 
     return drawing
 
 
+def list_readable_drawings(
+    db: Session, user_id: UUID, *, limit: int = 100,
+) -> list[Drawing]:
+    """Drawings the caller can read — owner OR project-member OR unclaimed.
+
+    Mirrors the per-drawing ``drawing_readable_by`` predicate in
+    :mod:`app.services.auth` but as a single query. Ordered by
+    ``created_at DESC``. Soft cap ``limit`` (default 100) so the
+    response stays bounded without real pagination yet.
+
+    The query plan:
+    - owner_id = :user_id         (own drawings)
+    - OR project_id IN (          (drawings in a project I'm in)
+          SELECT project_id FROM project_members WHERE user_id = :user_id
+        )
+    - OR owner_id IS NULL         (legacy / unclaimed)
+    """
+    from sqlalchemy import or_, select
+
+    from app.db import ProjectMember
+
+    my_projects = (
+        select(ProjectMember.project_id)
+        .where(ProjectMember.user_id == user_id)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        select(Drawing)
+        .where(
+            or_(
+                Drawing.owner_id == user_id,
+                Drawing.owner_id.is_(None),
+                Drawing.project_id.in_(my_projects),
+            )
+        )
+        .order_by(Drawing.created_at.desc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def _select_drawing(*, with_sheets: bool):
     from sqlalchemy import select
 
