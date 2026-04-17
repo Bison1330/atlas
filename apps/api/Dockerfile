@@ -33,7 +33,11 @@ RUN pip install \
       "structlog>=24.4,<26" \
       "sentry-sdk[fastapi]>=2.17,<3" \
       "boto3>=1.35,<2" \
-      "python-multipart>=0.0.12,<1"
+      "python-multipart>=0.0.12,<1" \
+      "anthropic>=0.40,<1" \
+      "argon2-cffi>=23.1,<26" \
+      "itsdangerous>=2.2,<3" \
+      "email-validator>=2.2,<3"
 
 COPY apps/api /app
 
