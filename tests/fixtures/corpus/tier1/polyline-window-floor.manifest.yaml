@@ -1,0 +1,21 @@
+name: polyline-window-floor
+description: |
+  10×8 floor with a window drawn as a raw LWPOLYLINE on A-WIND
+  (sill line), exercising the non-block window path in G-C1. No
+  door is drawn; the fixture asserts that the window is classified
+  without changing the derived-room topology.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_polyline_window_floor
+expected:
+  elements:
+    wall: { count: 4 }
+    window: { count: 1 }
+    room:
+      count: 1
+      areas: [80.0]
+      area_tolerance: 0.01
+  connectivity:
+    hosted_doors: 0
+    derived_rooms: 1
+    adjacencies: 0

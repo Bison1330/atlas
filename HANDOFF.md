@@ -25,9 +25,10 @@ An AEC platform for architectural drawing analysis. Tagline: **"Architecture tha
 | M1  | Ingest pipeline      | **live** | PDF → sheets → tiles, frontend viewer |
 | M2  | Structured drawings  | **live** | Rooms, walls, doors via NCS + ezdxf   |
 | M3  | Enhanced analysis    | **live** | Takeoffs + room connectivity + eval framework (Tier 1 synthetic fixtures PASS; gap catalog for real-CAD limits in `docs/research/extractor-gaps.md`). Code checks + cost deferred — not in the shipped slice. |
-| M4  | Design-intent Q&A    | planned  | Grounded answers with citations       |
-| M5  | Review workspace     | planned  | Annotations, exports                  |
-| M6  | Team collaboration   | planned  | Projects, roles                       |
+| M4  | Real-CAD capability  | planned  | Fix G-R3, G-C1, G-R1, G-O1, G-R5 so extractor works on real Revit/Archicad exports |
+| M5  | Design-intent Q&A    | planned  | Grounded answers with citations       |
+| M6  | Review workspace     | planned  | Annotations, exports                  |
+| M7  | Team collaboration   | planned  | Projects, roles                       |
 
 Rule: **each milestone ships end-to-end before the next starts.**
 

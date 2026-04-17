@@ -235,12 +235,20 @@ Trivial to add — duplicate one of the existing walls in
 
 For getting Atlas to "actually works on a real CAD export":
 
-1. **G-R3** (INSERT block flattening) — highest impact, blocks any
-   real Revit/Archicad input.
-2. **G-C1** (window classification) — cheap, removes a literal
-   "this kind of element does nothing" gap.
-3. **G-R1** (SPLINE walls) — once the corpus has a residential plan
-   with curves, this surfaces; fix early.
+1. ~~**G-R3** (INSERT block flattening)~~ — **resolved on
+   `m4/real-cad-capability`** via option (b): INSERT entities on
+   door / window / column layers become point-elements using their
+   insertion point as implied geometry. Fixture:
+   `tier1/insert-elements-floor.manifest.yaml`.
+2. ~~**G-C1** (window classification)~~ — **resolved on
+   `m4/real-cad-capability`**: WINDOW branch added for LWPOLYLINE
+   (open and closed) plus the INSERT path shared with G-R3.
+   Fixtures: `tier1/polyline-window-floor.manifest.yaml` and
+   `tier1/insert-elements-floor.manifest.yaml`.
+3. ~~**G-R1** (SPLINE walls)~~ — **resolved on
+   `m4/real-cad-capability`**: SPLINE on a wall layer is flattened
+   via ezdxf's `flattening(distance=0.01)` into polyline geometry.
+   Fixture: `tier1/spline-wall-floor.manifest.yaml`.
 4. **G-O1** (explicit + derived room dedup) — silent correctness
    bug for takeoffs; ship before we put dollar values on areas.
 5. **G-R5** (multi-segment polyline hosting) — once L-shaped walls

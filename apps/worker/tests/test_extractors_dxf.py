@@ -247,9 +247,169 @@ class TestEmptyAndEdgeCases:
         _ensure_layer(doc, "A-WALL")
         msp = doc.modelspace()
         # CIRCLE on A-WALL — wall layer but not the geometry shape we treat
-        # as a wall (we want LINE / LWPOLYLINE there).
+        # as a wall (we want LINE / LWPOLYLINE / SPLINE there).
         msp.add_circle(center=(0, 0), radius=1, dxfattribs={"layer": "A-WALL"})
         path = _write(doc, tmp_path / "circle-on-wall.dxf")
         summary = dxf.read_dxf(path)
         assert summary.candidates == []
         assert summary.skipped_entity_types.get("CIRCLE") == 1
+
+
+class TestBlockReferences:
+    """INSERT-entity handling (G-R3).
+
+    Real Revit / Archicad exports deliver doors, windows, and columns
+    as block references rather than raw geometry. Option (b) of G-R3:
+    treat the INSERT itself as the element using its insertion point
+    + scale as the implied geometry.
+    """
+
+    def _define_block(self, doc, name: str):
+        if name not in doc.blocks:
+            block = doc.blocks.new(name=name)
+            block.add_line((0, 0), (1, 0))
+        return name
+
+    def test_insert_on_door_layer_becomes_door_candidate(self, tmp_path):
+        doc = _new_doc()
+        _ensure_layer(doc, "A-DOOR")
+        name = self._define_block(doc, "M_Door-Single")
+        msp = doc.modelspace()
+        msp.add_blockref(
+            name,
+            insert=(3, 0),
+            dxfattribs={"layer": "A-DOOR", "rotation": 90},
+        )
+        path = _write(doc, tmp_path / "insert-door.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert len(summary.candidates) == 1
+        c = summary.candidates[0]
+        assert c.kind == ElementKind.DOOR
+        assert c.geometry["kind"] == "insert"
+        assert c.geometry["center"] == {"x": 3.0, "y": 0.0}
+        assert c.geometry["rotation_deg"] == pytest.approx(90.0)
+        assert c.attrs["source_entity"] == "INSERT"
+        assert c.attrs["block_name"] == "M_Door-Single"
+        assert c.ifc_type == "IfcDoor"
+
+    def test_insert_on_window_layer_becomes_window_candidate(self, tmp_path):
+        doc = _new_doc()
+        _ensure_layer(doc, "A-WIND")
+        name = self._define_block(doc, "M_Window")
+        msp = doc.modelspace()
+        msp.add_blockref(name, insert=(7, 8), dxfattribs={"layer": "A-WIND"})
+        path = _write(doc, tmp_path / "insert-window.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert len(summary.candidates) == 1
+        c = summary.candidates[0]
+        assert c.kind == ElementKind.WINDOW
+        assert c.geometry["kind"] == "insert"
+        assert c.geometry["center"] == {"x": 7.0, "y": 8.0}
+        assert c.ifc_type == "IfcWindow"
+
+    def test_insert_on_column_layer_becomes_column_candidate(self, tmp_path):
+        doc = _new_doc()
+        _ensure_layer(doc, "A-COLS")
+        name = self._define_block(doc, "W10x49")
+        msp = doc.modelspace()
+        msp.add_blockref(name, insert=(5, 4), dxfattribs={"layer": "A-COLS"})
+        path = _write(doc, tmp_path / "insert-column.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert len(summary.candidates) == 1
+        c = summary.candidates[0]
+        assert c.kind == ElementKind.COLUMN
+        assert c.geometry["kind"] == "insert"
+        assert c.ifc_type == "IfcColumn"
+
+    def test_insert_on_wall_layer_is_skipped(self, tmp_path):
+        # Walls are lines, not blocks — an INSERT on a wall layer is
+        # non-typical and we don't guess at its geometry. Skip it
+        # rather than produce a misleading point-element.
+        doc = _new_doc()
+        _ensure_layer(doc, "A-WALL")
+        name = self._define_block(doc, "RANDOM_BLOCK")
+        msp = doc.modelspace()
+        msp.add_blockref(name, insert=(0, 0), dxfattribs={"layer": "A-WALL"})
+        path = _write(doc, tmp_path / "insert-on-wall.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert summary.candidates == []
+        assert summary.skipped_entity_types.get("INSERT") == 1
+
+
+class TestWindowClassification:
+    """Window detection (G-C1): LWPOLYLINE path.
+
+    The INSERT path is covered by :class:`TestBlockReferences`.
+    """
+
+    def test_open_polyline_on_window_layer_becomes_window(self, tmp_path):
+        doc = _new_doc()
+        _ensure_layer(doc, "A-WIND")
+        msp = doc.modelspace()
+        # Sill line — open polyline along a wall.
+        msp.add_lwpolyline(
+            [(6, 8), (9, 8)],
+            close=False,
+            dxfattribs={"layer": "A-WIND"},
+        )
+        path = _write(doc, tmp_path / "polyline-window.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert len(summary.candidates) == 1
+        c = summary.candidates[0]
+        assert c.kind == ElementKind.WINDOW
+        assert c.geometry["kind"] == "polyline"
+        assert c.attrs["closed"] is False
+        assert c.ifc_type == "IfcWindow"
+
+    def test_closed_polyline_on_glaz_layer_becomes_window_polygon(self, tmp_path):
+        # A-GLAZ is the glazing variant NCS codes — also maps to WINDOW.
+        doc = _new_doc()
+        _ensure_layer(doc, "A-GLAZ")
+        msp = doc.modelspace()
+        msp.add_lwpolyline(
+            [(0, 0), (2, 0), (2, 0.2), (0, 0.2)],
+            close=True,
+            dxfattribs={"layer": "A-GLAZ"},
+        )
+        path = _write(doc, tmp_path / "glaz.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert len(summary.candidates) == 1
+        c = summary.candidates[0]
+        assert c.kind == ElementKind.WINDOW
+        assert c.geometry["kind"] == "polygon"
+
+
+class TestSplineWalls:
+    """SPLINE walls (G-R1): flattened into polyline geometry."""
+
+    def test_spline_on_wall_layer_becomes_wall_candidate(self, tmp_path):
+        doc = _new_doc()
+        _ensure_layer(doc, "A-WALL-EXTR")
+        msp = doc.modelspace()
+        msp.add_spline(
+            fit_points=[(0, 0), (5, 1), (10, 0)],
+            dxfattribs={"layer": "A-WALL-EXTR"},
+        )
+        path = _write(doc, tmp_path / "spline-wall.dxf")
+        summary = dxf.read_dxf(path)
+
+        assert len(summary.candidates) == 1
+        c = summary.candidates[0]
+        assert c.kind == ElementKind.WALL
+        assert c.geometry["kind"] == "polyline"
+        # ezdxf's flattening should give us many more points than the
+        # 3 fit points for a decent approximation of a curve.
+        assert len(c.geometry["points"]) >= 3
+        assert c.attrs["source_entity"] == "SPLINE"
+        assert c.attrs["flatten_distance"] == dxf.SPLINE_FLATTEN_DISTANCE
+        # Endpoints should match the input fit points within flatten tolerance.
+        first = c.geometry["points"][0]
+        last = c.geometry["points"][-1]
+        assert first["x"] == pytest.approx(0.0, abs=dxf.SPLINE_FLATTEN_DISTANCE)
+        assert last["x"] == pytest.approx(10.0, abs=dxf.SPLINE_FLATTEN_DISTANCE)

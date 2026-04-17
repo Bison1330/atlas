@@ -175,8 +175,8 @@ def compare(expected: dict[str, Any], actual: dict[str, Any]) -> list[CheckResul
 
     el_expected = expected.get("elements") or {}
 
-    # Per-kind counts. Walls / doors are simple count-only.
-    for kind in ("wall", "door"):
+    # Per-kind counts. Walls / doors / windows / columns are count-only.
+    for kind in ("wall", "door", "window", "column"):
         if kind not in el_expected:
             continue
         exp_n = el_expected[kind]["count"]

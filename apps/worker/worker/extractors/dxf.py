@@ -4,23 +4,25 @@ Reads modelspace + every paperspace layout, classifies each entity
 by its layer name (via the Phase 2 NCS parser), and yields
 ``ElementCandidate`` records ready for the orchestrator to persist.
 
-Entity coverage (Phase 3 — focused, conservative):
+Entity coverage:
 
-- ``LINE`` and open ``LWPOLYLINE`` on a wall layer → wall candidates
-  with ``polyline`` geometry.
+- ``LINE``, open ``LWPOLYLINE``, and ``SPLINE`` on a wall layer →
+  wall candidates with ``polyline`` geometry. SPLINE is flattened
+  via :data:`SPLINE_FLATTEN_DISTANCE` (G-R1).
 - Closed ``LWPOLYLINE`` on a room layer (A-ROOM / A-AREA / A-SPCE)
   → room candidates with ``polygon`` geometry.
 - ``ARC`` on a door layer → door candidates with ``arc`` geometry.
-  We don't yet pair arcs with their hinge LINE — the geometric
-  validators expect that pairing as an additional confidence boost,
-  but Phase 3 ships single-entity candidates and lets Phase 4 add
-  the spatial join.
+- ``INSERT`` on a door / window / column layer → candidate of the
+  matching kind using the insertion point as implied geometry
+  (G-R3, option b). This is the dominant pattern in Revit /
+  Archicad exports, where doors and windows are block references.
+- ``LWPOLYLINE`` on a window layer → window candidate (G-C1).
 - ``CIRCLE`` on a column layer → column candidates.
 
-Anything else (annotations, dimensions, hatches, splines) is
-collected as an ``OTHER`` candidate when its layer is well-formed
-NCS, and skipped otherwise. Unknown layer names never raise — they
-just don't produce candidates.
+Anything else (annotations, dimensions, hatches) is collected as an
+``OTHER`` candidate when its layer is well-formed NCS, and skipped
+otherwise. Unknown layer names never raise — they just don't
+produce candidates.
 
 Confidence model (per element, before orchestrator persistence):
 
@@ -58,6 +60,18 @@ _IFC_DEFAULTS: dict[ElementKind, str] = {
     ElementKind.STAIR: "IfcStair",
     ElementKind.ROOM: "IfcSpace",
 }
+
+# Element kinds that commonly ship as block references (INSERT) in
+# Revit / Archicad exports. See G-R3 in docs/research/extractor-gaps.md.
+_INSERT_KINDS: frozenset[ElementKind] = frozenset(
+    {ElementKind.DOOR, ElementKind.WINDOW, ElementKind.COLUMN}
+)
+
+# Max distance (in drawing units) between a SPLINE and its polyline
+# approximation. 0.01 is ~1 cm on metric plans and ~1/8" on
+# imperial — tight enough to hug residential radii without exploding
+# element count. See G-R1.
+SPLINE_FLATTEN_DISTANCE: float = 0.01
 
 
 @dataclass(slots=True)
@@ -152,7 +166,26 @@ def _entity_to_candidates(
     etype = entity.dxftype()
     handle = getattr(entity.dxf, "handle", None)
 
-    # Wall geometry: LINE or open LWPOLYLINE on a wall layer.
+    # Block references (INSERT) — treat the insertion point as the
+    # implied geometry for kinds that commonly ship as blocks. We
+    # don't flatten the block's internal entities; option (b) from
+    # G-R3. Insertion point lands in geometry.center so downstream
+    # door-hosting / connectivity still works.
+    if etype == "INSERT" and kind in _INSERT_KINDS:
+        return [
+            _make_candidate(
+                kind=kind,
+                geometry=_insert_geometry(entity),
+                attrs={
+                    "source_entity": "INSERT",
+                    "block_name": str(getattr(entity.dxf, "name", "") or ""),
+                },
+                layer=layer,
+                handle=handle,
+            )
+        ]
+
+    # Wall geometry: LINE, LWPOLYLINE, or SPLINE on a wall layer.
     if kind is ElementKind.WALL:
         if etype == "LINE":
             return [
@@ -177,6 +210,23 @@ def _entity_to_candidates(
                     handle=handle,
                 )
             ]
+        if etype == "SPLINE":
+            pts = _spline_to_points(entity)
+            if len(pts) < 2:
+                return []
+            return [
+                _make_candidate(
+                    kind=ElementKind.WALL,
+                    geometry={"kind": "polyline", "points": pts},
+                    attrs={
+                        "source_entity": "SPLINE",
+                        "flatten_distance": SPLINE_FLATTEN_DISTANCE,
+                        "vertex_count": len(pts),
+                    },
+                    layer=layer,
+                    handle=handle,
+                )
+            ]
         return []
 
     # Room boundary: closed LWPOLYLINE on a room layer.
@@ -193,7 +243,7 @@ def _entity_to_candidates(
             ]
         return []
 
-    # Door swing: ARC on a door layer.
+    # Door swing: ARC on a door layer (block-ref case handled above).
     if kind is ElementKind.DOOR:
         if etype == "ARC":
             return [
@@ -210,7 +260,30 @@ def _entity_to_candidates(
             ]
         return []
 
-    # Columns: CIRCLE or LWPOLYLINE.
+    # Window: LWPOLYLINE on a window layer (block-ref case handled
+    # above). Sill/jamb lines are out of scope until a real fixture
+    # needs them — see G-C1.
+    if kind is ElementKind.WINDOW:
+        if etype == "LWPOLYLINE":
+            closed = bool(entity.closed)
+            geometry = (
+                _polygon_geometry(entity) if closed else _polyline_geometry(entity)
+            )
+            return [
+                _make_candidate(
+                    kind=ElementKind.WINDOW,
+                    geometry=geometry,
+                    attrs={
+                        "source_entity": "LWPOLYLINE",
+                        "closed": closed,
+                    },
+                    layer=layer,
+                    handle=handle,
+                )
+            ]
+        return []
+
+    # Columns: CIRCLE (block-ref case handled above).
     if kind is ElementKind.COLUMN:
         if etype == "CIRCLE":
             return [
@@ -287,6 +360,40 @@ def _circle_geometry(entity: Any) -> dict[str, Any]:
         "center": {"x": float(c.x), "y": float(c.y)},
         "radius": float(entity.dxf.radius),
     }
+
+
+def _insert_geometry(entity: Any) -> dict[str, Any]:
+    """Insertion point + scale/rotation for a block reference.
+
+    We don't flatten the block's interior — the insertion point is
+    all we need for door-hosting and for placing the element on the
+    sheet. ``center`` is named to match ``_arc_geometry`` so the
+    connectivity code's ``geometry.get("center")`` lookup works
+    uniformly for block-based and arc-based doors.
+    """
+    ins = entity.dxf.insert
+    return {
+        "kind": "insert",
+        "center": {"x": float(ins.x), "y": float(ins.y)},
+        "rotation_deg": float(getattr(entity.dxf, "rotation", 0.0) or 0.0),
+        "x_scale": float(getattr(entity.dxf, "xscale", 1.0) or 1.0),
+        "y_scale": float(getattr(entity.dxf, "yscale", 1.0) or 1.0),
+    }
+
+
+def _spline_to_points(entity: Any) -> list[dict[str, float]]:
+    """Flatten a SPLINE into a polyline approximation.
+
+    ezdxf's ``Spline.flattening(distance)`` yields points along the
+    curve such that no point is farther than ``distance`` from the
+    true spline. Returns an empty list if the entity can't be
+    flattened (malformed control/knot vector).
+    """
+    try:
+        vertices = list(entity.flattening(SPLINE_FLATTEN_DISTANCE))
+    except Exception:
+        return []
+    return [{"x": float(v.x), "y": float(v.y)} for v in vertices]
 
 
 def _arc_sweep_deg(entity: Any) -> float:
