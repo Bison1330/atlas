@@ -1,0 +1,27 @@
+name: insert-elements-floor
+description: |
+  10×8 floor where the door, window, and column are all block
+  references (DXF INSERT entities), matching the dominant pattern
+  in Revit / Archicad exports. Exercises G-R3 (INSERT handling)
+  and G-C1 (INSERT windows). The insertion point of the door is
+  on the south wall, so door-hosting should succeed even though
+  the entity is an INSERT rather than an ARC.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_insert_elements_floor
+expected:
+  elements:
+    wall: { count: 4 }
+    door: { count: 1 }
+    window: { count: 1 }
+    column: { count: 1 }
+    room:
+      count: 1
+      areas: [80.0]
+      area_tolerance: 0.01
+  connectivity:
+    # Door INSERT hinge sits on the south wall → hosted; single
+    # enclosed room → no adjacency edge.
+    hosted_doors: 1
+    derived_rooms: 1
+    adjacencies: 0

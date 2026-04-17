@@ -28,9 +28,52 @@ import ezdxf
 
 def _new_doc():
     doc = ezdxf.new(dxfversion="R2018")
-    for layer in ("A-WALL-EXTR", "A-WALL-INTR", "A-DOOR", "A-ROOM"):
+    for layer in (
+        "A-WALL-EXTR",
+        "A-WALL-INTR",
+        "A-DOOR",
+        "A-WIND",
+        "A-COLS",
+        "A-ROOM",
+    ):
         doc.layers.add(layer)
     return doc
+
+
+def _ensure_door_block(doc) -> str:
+    """Define a minimal door-swing block once per doc.
+
+    Mirrors the Revit / Archicad pattern where every door in the plan
+    is an INSERT pointing at a named block definition (e.g.
+    ``M_Door-Single``). The block contains the arc + hinge line; we
+    only care that a block definition exists so INSERT references
+    resolve cleanly.
+    """
+    name = "ATLAS_DOOR_SINGLE"
+    if name not in doc.blocks:
+        block = doc.blocks.new(name=name)
+        block.add_arc(center=(0, 0), radius=1, start_angle=0, end_angle=90)
+        block.add_line((0, 0), (1, 0))
+    return name
+
+
+def _ensure_window_block(doc) -> str:
+    """Minimal window block: two parallel lines representing the glazing."""
+    name = "ATLAS_WINDOW_DOUBLE"
+    if name not in doc.blocks:
+        block = doc.blocks.new(name=name)
+        block.add_line((0, 0), (2, 0))
+        block.add_line((0, 0.1), (2, 0.1))
+    return name
+
+
+def _ensure_column_block(doc) -> str:
+    """Minimal column block: a unit circle at the origin."""
+    name = "ATLAS_COLUMN_ROUND"
+    if name not in doc.blocks:
+        block = doc.blocks.new(name=name)
+        block.add_circle(center=(0, 0), radius=0.25)
+    return name
 
 
 def build_one_room_floor(path: Path) -> Path:
@@ -145,5 +188,199 @@ def build_three_room_floor(path: Path) -> Path:
         center=(7.5, 5), radius=1, start_angle=0, end_angle=90,
         dxfattribs={"layer": "A-DOOR"},
     )
+    doc.saveas(str(path))
+    return path
+
+
+def build_insert_elements_floor(path: Path) -> Path:
+    """10×8 floor where the door, window, and column are all INSERTs.
+
+    Matches the dominant Revit / Archicad export pattern: every
+    "real" element is a block reference rather than raw geometry on
+    the appropriate NCS layer. Exercises G-R3 (INSERT handling) for
+    DOOR / WINDOW / COLUMN simultaneously, plus G-C1 for the INSERT
+    window path.
+
+    Layout::
+
+        +---------------+   y=8
+        |            []|<- window (INSERT on A-WIND)
+        |              |
+        |       [col]  |<- column (INSERT on A-COLS, mid-room)
+        |              |
+        +D=============+   y=0
+        x=0    ^       x=10
+               |
+               hinged door (INSERT on A-DOOR, at (3,0))
+    """
+    doc = _new_doc()
+    door_block = _ensure_door_block(doc)
+    window_block = _ensure_window_block(doc)
+    column_block = _ensure_column_block(doc)
+    msp = doc.modelspace()
+
+    for a, b in [
+        ((0, 0), (10, 0)),
+        ((10, 0), (10, 8)),
+        ((10, 8), (0, 8)),
+        ((0, 8), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    msp.add_blockref(
+        door_block, insert=(3, 0), dxfattribs={"layer": "A-DOOR"}
+    )
+    msp.add_blockref(
+        window_block, insert=(7, 8), dxfattribs={"layer": "A-WIND"}
+    )
+    msp.add_blockref(
+        column_block, insert=(5, 4), dxfattribs={"layer": "A-COLS"}
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_polyline_window_floor(path: Path) -> Path:
+    """10×8 floor with a window drawn as a raw LWPOLYLINE on A-WIND.
+
+    Exercises the non-block window path (G-C1) — some CAD authors
+    draw windows as sill+jamb polylines rather than block references.
+    No door; no adjacencies to assert.
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    for a, b in [
+        ((0, 0), (10, 0)),
+        ((10, 0), (10, 8)),
+        ((10, 8), (0, 8)),
+        ((0, 8), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # Window on the north wall, drawn as an open polyline (sill line).
+    msp.add_lwpolyline(
+        [(6, 8), (9, 8)],
+        close=False,
+        dxfattribs={"layer": "A-WIND"},
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_l_shaped_wall_floor(path: Path) -> Path:
+    """L-shaped room where one wall is a multi-vertex LWPOLYLINE.
+
+    Layout::
+
+        (0,10)----(3,10)
+          |          |
+          |          |      <- single LWPOLYLINE wall from
+          |          |         (10,3) → (3,3) → (3,10) → (0,10)
+          |          (3,3)-----------(10,3)
+          |                             |
+          |                             |
+        (0,0)-----------------------(10,0)
+
+    Interior L-area = 10*10 - 7*7 = 51. Without G-R5, the polyline
+    wall collapses to a straight (10,3)→(0,10) diagonal and the face
+    walker derives a quadrilateral of area 65 — distinct from the
+    correct 51, so the eval diagnoses the fix. A door sits on the
+    south wall at (5, 0).
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    # Straight walls: south, east-lower, west
+    for a, b in [
+        ((0, 0), (10, 0)),   # south
+        ((10, 0), (10, 3)),  # east lower
+        ((0, 10), (0, 0)),   # west
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # The L-bend as a single LWPOLYLINE — the exact shape that G-R5
+    # exists to handle. 4 vertices → 3 segments post-expansion.
+    msp.add_lwpolyline(
+        [(10, 3), (3, 3), (3, 10), (0, 10)],
+        close=False,
+        dxfattribs={"layer": "A-WALL-EXTR"},
+    )
+
+    # Door on south wall
+    msp.add_arc(
+        center=(5, 0), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_explicit_and_derived_room_floor(path: Path) -> Path:
+    """10×8 floor with BOTH wall loop AND an explicit A-ROOM polygon.
+
+    Production CAD often ships both: the walls define the boundary
+    and an A-ROOM polygon carries the author's room name / number.
+    Before G-O1, the orchestrator would persist *two* room elements
+    for the same footprint — the explicit polygon and a derived
+    wall-loop room — and the takeoffs endpoint would double-count.
+
+    After G-O1, the explicit element is annotated with
+    ``attrs.derivation_confirmed = True`` and no duplicate derived
+    room is inserted.
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    for a, b in [
+        ((0, 0), (10, 0)),
+        ((10, 0), (10, 8)),
+        ((10, 8), (0, 8)),
+        ((0, 8), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # Explicit room polygon covering the same footprint as the wall loop
+    msp.add_lwpolyline(
+        [(0, 0), (10, 0), (10, 8), (0, 8)],
+        close=True,
+        dxfattribs={"layer": "A-ROOM"},
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_spline_wall_floor(path: Path) -> Path:
+    """10×8 floor whose north wall is a SPLINE bowing upward.
+
+    Three LINE walls (south, east, west) plus one SPLINE wall along
+    the north, with endpoints at (10, 8) and (0, 8) and a control
+    point bulging outward at (5, 9). Exercises G-R1; combined with
+    G-R5 (Phase 2), the flattened polyline's sub-segments now feed
+    the face walker so the derived room traces the bulge and
+    reports the correct ~86.22-unit bowed area rather than the
+    straight-chord 80.
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    # Straight walls
+    for a, b in [
+        ((0, 0), (10, 0)),   # south
+        ((10, 0), (10, 8)),  # east
+        ((0, 8), (0, 0)),    # west
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # Curved north wall as a SPLINE
+    msp.add_spline(
+        fit_points=[(10, 8), (5, 9), (0, 8)],
+        dxfattribs={"layer": "A-WALL-EXTR"},
+    )
+
     doc.saveas(str(path))
     return path

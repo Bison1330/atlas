@@ -87,18 +87,19 @@ class TestExtractFromDxf:
 
         summary = extract.extract_from_dxf(db, d.id, path)
 
-        # 6 reader candidates (4 walls + 1 explicit room + 1 door) PLUS the
-        # M3 connectivity post-pass derives 1 room from the 4-wall loop = 7 total.
-        assert summary.elements_written == 7
-        assert summary.elements_by_kind == {"wall": 4, "room": 2, "door": 1}
+        # 6 reader candidates (4 walls + 1 explicit room + 1 door). The
+        # wall-loop derivation matches the explicit A-ROOM footprint, so
+        # G-O1 annotates the explicit element instead of inserting a
+        # duplicate derived room → 6 elements, 1 room total.
+        assert summary.elements_written == 6
+        assert summary.elements_by_kind == {"wall": 4, "room": 1, "door": 1}
         assert summary.layer_counts == {"A-WALL-EXTR": 4, "A-ROOM": 1, "A-DOOR": 1}
         assert summary.skipped_entity_types == {}
 
-        # Database state matches the summary.
         elements = db.query(Element).filter(Element.source_id == summary.source_id).all()
-        assert len(elements) == 7
+        assert len(elements) == 6
         kinds = sorted(e.kind for e in elements)
-        assert kinds == ["door", "room", "room", "wall", "wall", "wall", "wall"]
+        assert kinds == ["door", "room", "wall", "wall", "wall", "wall"]
 
         wall = next(e for e in elements if e.kind == "wall")
         assert wall.ncs_layer == "A-WALL-EXTR"
@@ -107,14 +108,15 @@ class TestExtractFromDxf:
         assert wall.geometry["kind"] == "polyline"
         assert wall.confidence == pytest.approx(1.0)
 
-        # Connectivity post-pass populated host_element_id on the door (it
-        # sits on the (0,0)→(10,0) wall) and inserted a derived room.
         door = next(e for e in elements if e.kind == "door")
         assert door.host_element_id is not None
-        derived = [e for e in elements if e.kind == "room" and e.attrs.get("derived")]
-        assert len(derived) == 1
-        assert derived[0].attrs["derivation"] == "wall_loop"
-        assert derived[0].ifc_type == "IfcSpace"
+
+        # The explicit A-ROOM row is present and has been annotated
+        # with the wall-loop derivation confirmation (G-O1).
+        room = next(e for e in elements if e.kind == "room")
+        assert not room.attrs.get("derived")
+        assert room.attrs.get("derivation_confirmed") is True
+        assert room.attrs.get("derived_area") == pytest.approx(80.0)
 
     def test_source_row_is_completed(self, db: Session, tmp_path: Path, captured_events):
         d, _ = _make_drawing(db)
@@ -128,10 +130,13 @@ class TestExtractFromDxf:
         assert src.producer_name == extract.PRODUCER_NAME
         assert src.started_at is not None
         assert src.finished_at is not None
-        assert src.summary["elements_written"] == 7
+        assert src.summary["elements_written"] == 6
         assert src.summary["elements_by_kind"]["wall"] == 4
         assert src.summary["connectivity"]["hosted_doors"] == 1
-        assert src.summary["connectivity"]["derived_rooms"] == 1
+        # Derived room matched the explicit A-ROOM → 0 inserted,
+        # 1 explicit confirmed.
+        assert src.summary["connectivity"]["derived_rooms"] == 0
+        assert src.summary["connectivity"]["confirmed_explicit_rooms"] == 1
 
     def test_publishes_started_and_completed_events(
         self, db: Session, tmp_path: Path, captured_events
@@ -145,7 +150,7 @@ class TestExtractFromDxf:
         assert types[-1] == "extraction.completed"
         # Final completed event carries the summary.
         last = captured_events[-1][1]
-        assert last["summary"]["elements_written"] == 7
+        assert last["summary"]["elements_written"] == 6
         # Channel-key is the drawing id, not a string we made up.
         assert all(drawing_id == d.id for drawing_id, _ in captured_events)
 
@@ -160,6 +165,114 @@ class TestExtractFromDxf:
 
         types = [payload["type"] for (_, payload) in captured_events]
         assert types.count("extraction.progress") >= 2
+
+
+# -------- G-R5: multi-segment polyline walls --------
+
+
+def _l_shaped_dxf(path: Path) -> Path:
+    """L-shaped room with one wall authored as a 4-vertex LWPOLYLINE.
+
+    Exercises G-R5: without the polyline expansion, the orchestrator
+    collapses the L-bend to a straight diagonal and both hosting and
+    face-finding go wrong. With the fix, the single LWPOLYLINE
+    contributes three segments, the planar face walker recovers the
+    correct L-area of 51, and a door on the south wall hosts on the
+    LINE element (not on some random leftover segment).
+    """
+    doc = ezdxf.new(dxfversion="R2018")
+    for layer in ("A-WALL-EXTR", "A-DOOR"):
+        doc.layers.add(layer)
+    msp = doc.modelspace()
+    for a, b in [
+        ((0, 0), (10, 0)),   # south LINE
+        ((10, 0), (10, 3)),  # east lower LINE
+        ((0, 10), (0, 0)),   # west LINE
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+    msp.add_lwpolyline(
+        [(10, 3), (3, 3), (3, 10), (0, 10)],
+        close=False,
+        dxfattribs={"layer": "A-WALL-EXTR"},
+    )
+    msp.add_arc(
+        center=(5, 0), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+    doc.saveas(str(path))
+    return path
+
+
+class TestMultiSegmentWallHosting:
+    def test_l_shaped_polyline_wall_derives_correct_area(
+        self, db: Session, tmp_path: Path, captured_events
+    ):
+        d, _ = _make_drawing(db)
+        path = _l_shaped_dxf(tmp_path / "l-shape.dxf")
+        summary = extract.extract_from_dxf(db, d.id, path)
+
+        elements = (
+            db.query(Element)
+            .filter(Element.source_id == summary.source_id)
+            .all()
+        )
+
+        # 4 wall elements (3 LINEs + 1 LWPOLYLINE) + 1 door + 1
+        # derived room (no explicit A-ROOM, so no dedup).
+        assert summary.elements_by_kind == {"wall": 4, "door": 1, "room": 1}
+
+        rooms = [e for e in elements if e.kind == "room"]
+        assert len(rooms) == 1
+        # Correct L-area is 51; a straight-chord collapse would give 65.
+        assert rooms[0].attrs["area"] == pytest.approx(51.0)
+
+        # Door hosts on the south LINE wall, not on the polyline wall.
+        door = next(e for e in elements if e.kind == "door")
+        assert door.host_element_id is not None
+        host = db.get(Element, door.host_element_id)
+        assert host is not None
+        assert host.kind == "wall"
+        south_pts = host.geometry["points"]
+        assert south_pts[0] == {"x": 0.0, "y": 0.0}
+        assert south_pts[-1] == {"x": 10.0, "y": 0.0}
+
+
+# -------- G-O1: explicit vs derived room dedup --------
+
+
+def _walls_only_dxf(path: Path) -> Path:
+    """4 walls, no explicit A-ROOM. Sanity: dedup shouldn't fire."""
+    doc = ezdxf.new(dxfversion="R2018")
+    doc.layers.add("A-WALL-EXTR")
+    msp = doc.modelspace()
+    for a, b in [
+        ((0, 0), (10, 0)),
+        ((10, 0), (10, 8)),
+        ((10, 8), (0, 8)),
+        ((0, 8), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+    doc.saveas(str(path))
+    return path
+
+
+class TestExplicitVsDerivedRoomDedup:
+    def test_walls_only_still_inserts_derived_room(
+        self, db: Session, tmp_path: Path, captured_events
+    ):
+        # Negative check: no explicit A-ROOM → derived room lands
+        # exactly as before. G-O1 must not regress the happy path.
+        d, _ = _make_drawing(db)
+        path = _walls_only_dxf(tmp_path / "walls.dxf")
+        summary = extract.extract_from_dxf(db, d.id, path)
+
+        rooms = (
+            db.query(Element)
+            .filter(Element.source_id == summary.source_id, Element.kind == "room")
+            .all()
+        )
+        assert len(rooms) == 1
+        assert rooms[0].attrs.get("derived") is True
 
 
 # -------- sheet selection --------

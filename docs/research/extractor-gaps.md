@@ -71,7 +71,7 @@ xref'd entities live in *other* files we don't open.
 referenced files relative to the source DXF's directory.
 
 ### G-R5 — Multi-segment LWPOLYLINE walls become one segment in hosting
-**Severity:** silent — but may produce wrong host attribution
+**Severity:** ~~silent — but may produce wrong host attribution~~ — **resolved on `m4/real-cad-capability` (Phase 2).**
 **Symptom:** A wall drawn as a single LWPOLYLINE with multiple
 vertices (e.g. an L-shaped wall) is converted to a polyline
 geometry with all the vertices, but the hosting algorithm in
@@ -80,10 +80,13 @@ and last point* before passing to `host_walls_for_doors`. So a
 door near the elbow of an L-shaped wall would either fail to host
 or host on the wrong wall.
 **Where:** `apps/worker/worker/jobs/extract.py:_wall_segment`.
-**Fix shape:** Either expand the polyline into N individual segments
+**Fix shape:** ~~Either expand the polyline into N individual segments
 before hosting (and remember the parent wall id for each), or
 extend `host_walls_for_doors` to accept multi-segment chains
-directly.
+directly.~~ Implemented the first option: `_wall_segments` returns
+consecutive-vertex pairs and the orchestrator keeps a parallel
+`segment_parent` list so hosting resolves back to the original
+Element row.
 
 ---
 
@@ -185,20 +188,23 @@ calibrate.
 ## Orchestrator
 
 ### G-O1 — Hosting + room derivation ignore explicit A-ROOM polygons
-**Severity:** correctness; produces *duplicate* rooms when both an
-explicit A-ROOM polygon and a derived wall-loop room cover the same
-area
+**Severity:** ~~correctness; produces *duplicate* rooms~~ — **resolved on `m4/real-cad-capability` (Phase 2).**
 **Symptom:** A drawing with both well-drawn wall loops AND
 explicit room polygons ends up with one Element row per source —
 the explicit one has the author's name/number, the derived one has
 geometry-from-walls but no name. The takeoff endpoint then
 double-counts the area.
 **Where:** `apps/worker/worker/jobs/extract.py:_run_connectivity_analysis`.
-**Fix shape:** Before inserting a derived room, check whether an
+**Fix shape:** ~~Before inserting a derived room, check whether an
 explicit A-ROOM element covers the same bbox + polygon (within
 tolerance); if so, *attach* the derivation metadata to the
 explicit element (set `attrs.derivation_confirmed = True`) instead
-of inserting a duplicate.
+of inserting a duplicate.~~ Implemented: predicate lives in
+`atlas_core.connectivity.dedup_derived_against_explicit` (bbox IoU
+≥ 0.9 AND |Δarea| / max_area ≤ 0.1). On match, the explicit row
+gets `attrs.derivation_confirmed = True` + `attrs.derived_area`
+and the derived insert is skipped. Source summary gains a
+`confirmed_explicit_rooms` counter.
 
 ### G-O2 — Re-extraction doesn't garbage-collect old derived rooms
 **Severity:** correctness
@@ -235,16 +241,35 @@ Trivial to add — duplicate one of the existing walls in
 
 For getting Atlas to "actually works on a real CAD export":
 
-1. **G-R3** (INSERT block flattening) — highest impact, blocks any
-   real Revit/Archicad input.
-2. **G-C1** (window classification) — cheap, removes a literal
-   "this kind of element does nothing" gap.
-3. **G-R1** (SPLINE walls) — once the corpus has a residential plan
-   with curves, this surfaces; fix early.
-4. **G-O1** (explicit + derived room dedup) — silent correctness
-   bug for takeoffs; ship before we put dollar values on areas.
-5. **G-R5** (multi-segment polyline hosting) — once L-shaped walls
-   land in the corpus, this surfaces.
+1. ~~**G-R3** (INSERT block flattening)~~ — **resolved on
+   `m4/real-cad-capability`** via option (b): INSERT entities on
+   door / window / column layers become point-elements using their
+   insertion point as implied geometry. Fixture:
+   `tier1/insert-elements-floor.manifest.yaml`.
+2. ~~**G-C1** (window classification)~~ — **resolved on
+   `m4/real-cad-capability`**: WINDOW branch added for LWPOLYLINE
+   (open and closed) plus the INSERT path shared with G-R3.
+   Fixtures: `tier1/polyline-window-floor.manifest.yaml` and
+   `tier1/insert-elements-floor.manifest.yaml`.
+3. ~~**G-R1** (SPLINE walls)~~ — **resolved on
+   `m4/real-cad-capability`**: SPLINE on a wall layer is flattened
+   via ezdxf's `flattening(distance=0.01)` into polyline geometry.
+   Fixture: `tier1/spline-wall-floor.manifest.yaml`.
+4. ~~**G-O1** (explicit + derived room dedup)~~ — **resolved on
+   `m4/real-cad-capability`** (Phase 2). The orchestrator now
+   computes bbox-IoU + area-fraction against explicit A-ROOM
+   polygons and annotates the explicit element with
+   `attrs.derivation_confirmed = True` / `attrs.derived_area`
+   instead of inserting a duplicate. Predicate lives in
+   `atlas_core.connectivity.dedup_derived_against_explicit`.
+   Fixture: `tier1/explicit-and-derived-room-floor.manifest.yaml`.
+5. ~~**G-R5** (multi-segment polyline hosting)~~ — **resolved on
+   `m4/real-cad-capability`** (Phase 2). `_wall_segment` replaced
+   with `_wall_segments` which expands each wall's polyline into
+   consecutive-vertex segments; the orchestrator keeps a parallel
+   parent-element map so `door.host_element_id` still resolves to
+   the original wall row. Fixture:
+   `tier1/l-shaped-wall-floor.manifest.yaml`.
 
 Everything else is post-MVP and can be calibrated against real
 inputs once they exist.

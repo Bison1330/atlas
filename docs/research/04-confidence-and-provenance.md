@@ -40,7 +40,7 @@ Closes **D-05** (provenance model). Determines:
   `version`, `superseded_by`, `human_verified` flags?),
 - whether the API needs a "compare two element-source runs"
   endpoint shape from day one,
-- how M4 (design-intent Q&A) cites elements back to source — if
+- how M5 (design-intent Q&A) cites elements back to source — if
   every element already carries `source + version + confidence` the
   citation surface is free.
 

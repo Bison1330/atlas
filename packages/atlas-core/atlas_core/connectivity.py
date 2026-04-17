@@ -275,6 +275,80 @@ def derive_rooms_from_walls(
 
 
 # ---------------------------------------------------------------------------
+# Explicit-room dedup
+# ---------------------------------------------------------------------------
+
+
+# Match thresholds for "this derived room is the same area as this
+# explicit A-ROOM polygon". Tuned for the realistic case where the
+# explicit polygon hugs the inner face of the walls while the derived
+# ring traces wall centerlines — that gives high bbox overlap and
+# small-but-nonzero area divergence. See G-O1.
+DEDUP_BBOX_IOU_MIN: float = 0.9
+DEDUP_AREA_FRAC_MAX: float = 0.1
+
+
+def dedup_derived_against_explicit(
+    derived: list["DerivedRoom"],
+    explicit: list[tuple[list[Point], tuple[float, float, float, float]]],
+    *,
+    bbox_iou_min: float = DEDUP_BBOX_IOU_MIN,
+    area_frac_max: float = DEDUP_AREA_FRAC_MAX,
+) -> list[int | None]:
+    """For each derived room, which explicit polygon it duplicates (if any).
+
+    Returns a list the same length as ``derived``; each entry is
+    either the matching index in ``explicit`` or ``None``. The
+    match predicate is bbox IoU above threshold *and* room-area
+    within a fractional tolerance — both are needed because bbox
+    alone can match a room-inside-a-room pair (G-K2), and area alone
+    can match two unrelated rooms that happen to be the same size.
+
+    ``explicit`` entries are ``(ring, bbox)`` tuples. Callers that
+    have ORM rows pass a mapped list; the connectivity module stays
+    free of SQLAlchemy.
+    """
+    results: list[int | None] = []
+    explicit_areas = [_abs_signed_area(ring) for ring, _ in explicit]
+    for d in derived:
+        match_idx: int | None = None
+        for j, (_, ebox) in enumerate(explicit):
+            iou = _bbox_iou(d.bbox, ebox)
+            if iou < bbox_iou_min:
+                continue
+            e_area = explicit_areas[j]
+            area_max = max(d.area, e_area)
+            if area_max <= 0:
+                continue
+            if abs(d.area - e_area) / area_max > area_frac_max:
+                continue
+            match_idx = j
+            break
+        results.append(match_idx)
+    return results
+
+
+def _bbox_iou(
+    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
+) -> float:
+    inter_minx = max(a[0], b[0])
+    inter_miny = max(a[1], b[1])
+    inter_maxx = min(a[2], b[2])
+    inter_maxy = min(a[3], b[3])
+    if inter_minx >= inter_maxx or inter_miny >= inter_maxy:
+        return 0.0
+    inter = (inter_maxx - inter_minx) * (inter_maxy - inter_miny)
+    area_a = max(0.0, (a[2] - a[0]) * (a[3] - a[1]))
+    area_b = max(0.0, (b[2] - b[0]) * (b[3] - b[1]))
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _abs_signed_area(ring: list[Point]) -> float:
+    return abs(_signed_area(ring))
+
+
+# ---------------------------------------------------------------------------
 # Room adjacency via doors
 # ---------------------------------------------------------------------------
 

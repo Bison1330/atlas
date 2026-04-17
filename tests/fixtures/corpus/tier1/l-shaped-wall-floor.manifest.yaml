@@ -1,0 +1,25 @@
+name: l-shaped-wall-floor
+description: |
+  L-shaped room where one exterior wall is a single 4-vertex
+  LWPOLYLINE. Interior area = 10*10 - 7*7 = 51. Three LINE walls
+  plus one LWPOLYLINE (which the orchestrator now expands into
+  three segments for hosting + face-finding). Exercises G-R5.
+
+  Without G-R5 the polyline collapses to a straight diagonal and
+  the face walker reports a quadrilateral of area 65, so area-51
+  in the derived room is the diagnostic.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_l_shaped_wall_floor
+expected:
+  elements:
+    wall: { count: 4 }   # 3 LINEs + 1 LWPOLYLINE element
+    door: { count: 1 }
+    room:
+      count: 1
+      areas: [51.0]
+      area_tolerance: 0.01
+  connectivity:
+    hosted_doors: 1
+    derived_rooms: 1
+    adjacencies: 0

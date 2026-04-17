@@ -36,7 +36,7 @@ should Atlas's storage shape mirror them?
 Closes **D-01** (polymorphic vs per-kind elements table) and feeds
 into **D-02** (geometry storage). If the industry has converged on a
 shape — even loosely — mirroring it costs us nothing today and saves
-a painful migration when we want to import/export IFC in M5+.
+a painful migration when we want to import/export IFC in M6+.
 
 ## Sources
 

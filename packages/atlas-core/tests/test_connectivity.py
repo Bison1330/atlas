@@ -172,6 +172,86 @@ class TestDeriveRoomsFromWalls:
         assert rooms[0].area == pytest.approx(100.0, rel=0.01)
 
 
+# ---------- explicit-room dedup (G-O1) ----------
+
+
+class TestDedupDerivedAgainstExplicit:
+    def _ring_bbox(self, ring):
+        xs = [p[0] for p in ring]
+        ys = [p[1] for p in ring]
+        return ring, (min(xs), min(ys), max(xs), max(ys))
+
+    def test_matching_explicit_polygon_matches(self):
+        walls = [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((10.0, 0.0), (10.0, 8.0)),
+            ((10.0, 8.0), (0.0, 8.0)),
+            ((0.0, 8.0), (0.0, 0.0)),
+        ]
+        derived = c.derive_rooms_from_walls(walls)
+        explicit = [self._ring_bbox(
+            [(0.0, 0.0), (10.0, 0.0), (10.0, 8.0), (0.0, 8.0)]
+        )]
+        matches = c.dedup_derived_against_explicit(derived, explicit)
+        assert matches == [0]
+
+    def test_no_explicit_is_passthrough(self):
+        walls = [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((10.0, 0.0), (10.0, 8.0)),
+            ((10.0, 8.0), (0.0, 8.0)),
+            ((0.0, 8.0), (0.0, 0.0)),
+        ]
+        derived = c.derive_rooms_from_walls(walls)
+        assert c.dedup_derived_against_explicit(derived, []) == [None]
+
+    def test_explicit_polygon_with_different_footprint_no_match(self):
+        walls = [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((10.0, 0.0), (10.0, 8.0)),
+            ((10.0, 8.0), (0.0, 8.0)),
+            ((0.0, 8.0), (0.0, 0.0)),
+        ]
+        derived = c.derive_rooms_from_walls(walls)
+        # An explicit room somewhere else entirely.
+        explicit = [self._ring_bbox(
+            [(50.0, 50.0), (60.0, 50.0), (60.0, 58.0), (50.0, 58.0)]
+        )]
+        assert c.dedup_derived_against_explicit(derived, explicit) == [None]
+
+    def test_nested_room_not_confused_for_outer(self):
+        # Derived room is the outer 10x8; explicit polygon is a tiny
+        # inner room at (4,3)-(6,5). Bboxes do overlap, but the
+        # area-fraction test rejects the match.
+        walls = [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((10.0, 0.0), (10.0, 8.0)),
+            ((10.0, 8.0), (0.0, 8.0)),
+            ((0.0, 8.0), (0.0, 0.0)),
+        ]
+        derived = c.derive_rooms_from_walls(walls)
+        explicit = [self._ring_bbox(
+            [(4.0, 3.0), (6.0, 3.0), (6.0, 5.0), (4.0, 5.0)]
+        )]
+        assert c.dedup_derived_against_explicit(derived, explicit) == [None]
+
+    def test_slight_bbox_divergence_still_matches(self):
+        # Explicit polygon drawn on the inner face of the walls —
+        # slightly smaller bbox than the wall-centerline derivation.
+        # Should still match (IoU ≥ 0.9, area within tolerance).
+        walls = [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((10.0, 0.0), (10.0, 8.0)),
+            ((10.0, 8.0), (0.0, 8.0)),
+            ((0.0, 8.0), (0.0, 0.0)),
+        ]
+        derived = c.derive_rooms_from_walls(walls)
+        explicit = [self._ring_bbox(
+            [(0.1, 0.1), (9.9, 0.1), (9.9, 7.9), (0.1, 7.9)]
+        )]
+        assert c.dedup_derived_against_explicit(derived, explicit) == [0]
+
+
 # ---------- room adjacency ----------
 
 

@@ -5,9 +5,10 @@ const milestones = [
   { id: "M1", title: "Ingest pipeline", status: "live" as const, note: "PDF → sheets → tiles" },
   { id: "M2", title: "Structured drawings", status: "live" as const, note: "DXF → elements (walls, doors, rooms, symbols)" },
   { id: "M3", title: "Enhanced analysis", status: "live" as const, note: "takeoffs · room connectivity · eval framework" },
-  { id: "M4", title: "Design-intent Q&A", status: "planned" as const, note: "grounded answers with citations" },
-  { id: "M5", title: "Review workspace", status: "planned" as const, note: "annotations, exports" },
-  { id: "M6", title: "Team collaboration", status: "planned" as const, note: "projects, roles" },
+  { id: "M4", title: "Real-CAD capability", status: "planned" as const, note: "extractor works on real Revit/Archicad exports" },
+  { id: "M5", title: "Design-intent Q&A", status: "planned" as const, note: "grounded answers with citations" },
+  { id: "M6", title: "Review workspace", status: "planned" as const, note: "annotations, exports" },
+  { id: "M7", title: "Team collaboration", status: "planned" as const, note: "projects, roles" },
 ];
 
 const statusStyles: Record<"live" | "planned", string> = {

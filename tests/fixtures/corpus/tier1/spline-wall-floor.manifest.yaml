@@ -1,0 +1,24 @@
+name: spline-wall-floor
+description: |
+  10×8 floor where the north wall is a SPLINE bowing outward
+  (control point at (5, 9)). Three LINE walls + one SPLINE wall,
+  the SPLINE's flattened polyline endpoints align with the
+  neighboring LINE endpoints at (0, 8) and (10, 8) so the planar
+  graph still closes. Exercises G-R1 and G-R5 together: now that
+  the orchestrator feeds every polyline sub-segment to the face
+  walker, the derived room traces the spline's bulge and reports
+  the true bowed-region area (~86.22), not the straight-chord 80.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_spline_wall_floor
+expected:
+  elements:
+    wall: { count: 4 }
+    room:
+      count: 1
+      areas: [86.2158203125]
+      area_tolerance: 0.001
+  connectivity:
+    hosted_doors: 0
+    derived_rooms: 1
+    adjacencies: 0
