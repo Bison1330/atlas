@@ -169,16 +169,17 @@ class TestRunDxfExtraction:
         bucket_arg, key_arg, _ = patched_s3.download_file.call_args.args
         assert key_arg == "drawings/x/extractions/y/source.dxf"
 
-        # Source landed at completed.
+        # Source landed at completed. 6 candidates from the reader + 1
+        # derived room from the M3 connectivity post-pass = 7 elements.
         db.expire_all()
         refreshed = db.get(ElementSource, src.id)
         assert refreshed.status == "completed"
-        assert refreshed.summary["elements_written"] == 6
+        assert refreshed.summary["elements_written"] == 7
 
         # Elements landed against the test sheet.
         assert db.query(Element).filter(
             Element.source_id == src.id
-        ).count() == 6
+        ).count() == 7
 
     def test_missing_source_raises(
         self, db, captured_events, patched_session_scope, patched_s3

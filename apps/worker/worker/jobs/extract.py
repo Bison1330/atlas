@@ -167,6 +167,21 @@ def extract_from_dxf(
 
         # Final flush + finalize.
         session.flush()
+
+        # M3 Phase 2: post-extraction connectivity analysis. Populates
+        # door host_element_id, inserts derived rooms (kind=room with
+        # attrs.derived=true), records counts in the source summary.
+        # Adjacency is computed on-demand by the API, not persisted.
+        connectivity_summary = _run_connectivity_analysis(
+            session, source.id, sheet_uuid
+        )
+        # The post-pass may have inserted derived rooms; reflect that
+        # in the elements counters before finalizing.
+        elements_written += connectivity_summary["derived_rooms"]
+        kind_counts["room"] = (
+            kind_counts.get("room", 0) + connectivity_summary["derived_rooms"]
+        )
+
         source.status = "completed"
         source.finished_at = datetime.now(UTC)
         source.summary = {
@@ -175,6 +190,7 @@ def extract_from_dxf(
             "layer_counts": read_summary.layer_counts,
             "skipped_entity_types": read_summary.skipped_entity_types,
             "skipped_unknown_layers": read_summary.skipped_unknown_layers,
+            "connectivity": connectivity_summary,
         }
         session.add(source)
         session.commit()
@@ -283,6 +299,126 @@ def candidates_to_elements(
 ) -> list[Element]:
     """Helper: bulk convert candidates → Element rows. Used by tests."""
     return [_candidate_to_element(c, sheet_id, source_id) for c in candidates]
+
+
+# ---------- M3 Phase 2: connectivity post-pass ----------
+
+
+def _run_connectivity_analysis(
+    session: Session,
+    source_id: UUID,
+    sheet_id: UUID,
+) -> dict[str, int]:
+    """Compute door hosting + derive rooms from wall loops.
+
+    Operates on the elements just written by the orchestrator. Three
+    side effects:
+
+    1. ``Element.host_element_id`` set on every door whose hinge sits
+       on a wall (within tolerance).
+    2. New ``Element`` rows inserted for each derived room (CCW
+       interior face of the wall planar graph), tagged
+       ``attrs.derived = True`` so downstream code can distinguish
+       them from explicitly-drawn A-ROOM polygons.
+    3. Adjacency edges are *counted* into the returned summary so
+       the source row records "this run produced N adjacencies",
+       but the actual edges are computed on-demand by the API to
+       avoid a new table.
+
+    Pure side-effecting; doesn't commit.
+    """
+    from atlas_core import connectivity
+
+    walls = (
+        session.query(Element)
+        .filter(Element.source_id == source_id, Element.kind == "wall")
+        .all()
+    )
+    doors = (
+        session.query(Element)
+        .filter(Element.source_id == source_id, Element.kind == "door")
+        .all()
+    )
+
+    if not walls:
+        return {"hosted_doors": 0, "derived_rooms": 0, "adjacencies": 0}
+
+    # Marshal ORM rows into the algorithm's bare-tuple shapes.
+    wall_segments: list[connectivity.Segment] = [
+        _wall_segment(w) for w in walls
+    ]
+    door_centers: list[connectivity.Point] = [
+        _door_center(d) for d in doors
+    ]
+
+    # Hosting — set host_element_id on each door whose hinge is on a wall.
+    hostings = connectivity.host_walls_for_doors(door_centers, wall_segments)
+    hosted = 0
+    for h in hostings:
+        if h.wall_index is None:
+            continue
+        doors[h.door_index].host_element_id = walls[h.wall_index].id
+        session.add(doors[h.door_index])
+        hosted += 1
+
+    # Derive rooms from the wall planar graph; persist each as a new
+    # Element row tagged derived=True.
+    derived = connectivity.derive_rooms_from_walls(wall_segments)
+    for room in derived:
+        ring = [{"x": p[0], "y": p[1]} for p in room.ring]
+        session.add(Element(
+            sheet_id=sheet_id,
+            source_id=source_id,
+            kind="room",
+            ifc_type="IfcSpace",
+            geometry={"kind": "polygon", "ring": ring},
+            bbox={
+                "minx": room.bbox[0], "miny": room.bbox[1],
+                "maxx": room.bbox[2], "maxy": room.bbox[3],
+            },
+            attrs={
+                "derived": True,
+                "derivation": "wall_loop",
+                "area": round(room.area, 6),
+            },
+            confidence=0.85,
+        ))
+    session.flush()
+
+    # Count adjacency edges for the run summary; actual edges are
+    # rebuilt on demand by the connectivity API.
+    edges = connectivity.room_adjacency_via_doors(derived, door_centers)
+
+    return {
+        "hosted_doors": hosted,
+        "derived_rooms": len(derived),
+        "adjacencies": len(edges),
+    }
+
+
+def _wall_segment(wall: Element) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Pull the (start, end) tuple from a wall's polyline geometry.
+
+    Wall geometry is stored as a polyline; for hosting/face-finding we
+    treat each as a single segment between its first and last point.
+    Degenerate or wrong-shape geometry returns a zero-length segment
+    so caller indexing stays aligned.
+    """
+    geom = wall.geometry or {}
+    pts = geom.get("points") or []
+    if len(pts) < 2:
+        return ((0.0, 0.0), (0.0, 0.0))
+    a, b = pts[0], pts[-1]
+    return ((float(a["x"]), float(a["y"])), (float(b["x"]), float(b["y"])))
+
+
+def _door_center(door: Element) -> tuple[float, float]:
+    """Pull the arc center out of a door's geometry; (0,0) on garbage."""
+    geom = door.geometry or {}
+    c = geom.get("center")
+    if not c:
+        return (0.0, 0.0)
+    return (float(c["x"]), float(c["y"]))
 
 
 # ---------- RQ entrypoint ----------

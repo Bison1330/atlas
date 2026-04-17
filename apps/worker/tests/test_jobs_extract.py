@@ -87,16 +87,18 @@ class TestExtractFromDxf:
 
         summary = extract.extract_from_dxf(db, d.id, path)
 
-        assert summary.elements_written == 6
-        assert summary.elements_by_kind == {"wall": 4, "room": 1, "door": 1}
+        # 6 reader candidates (4 walls + 1 explicit room + 1 door) PLUS the
+        # M3 connectivity post-pass derives 1 room from the 4-wall loop = 7 total.
+        assert summary.elements_written == 7
+        assert summary.elements_by_kind == {"wall": 4, "room": 2, "door": 1}
         assert summary.layer_counts == {"A-WALL-EXTR": 4, "A-ROOM": 1, "A-DOOR": 1}
         assert summary.skipped_entity_types == {}
 
         # Database state matches the summary.
         elements = db.query(Element).filter(Element.source_id == summary.source_id).all()
-        assert len(elements) == 6
+        assert len(elements) == 7
         kinds = sorted(e.kind for e in elements)
-        assert kinds == ["door", "room", "wall", "wall", "wall", "wall"]
+        assert kinds == ["door", "room", "room", "wall", "wall", "wall", "wall"]
 
         wall = next(e for e in elements if e.kind == "wall")
         assert wall.ncs_layer == "A-WALL-EXTR"
@@ -104,6 +106,15 @@ class TestExtractFromDxf:
         assert wall.ifc_type == "IfcWallStandardCase"
         assert wall.geometry["kind"] == "polyline"
         assert wall.confidence == pytest.approx(1.0)
+
+        # Connectivity post-pass populated host_element_id on the door (it
+        # sits on the (0,0)→(10,0) wall) and inserted a derived room.
+        door = next(e for e in elements if e.kind == "door")
+        assert door.host_element_id is not None
+        derived = [e for e in elements if e.kind == "room" and e.attrs.get("derived")]
+        assert len(derived) == 1
+        assert derived[0].attrs["derivation"] == "wall_loop"
+        assert derived[0].ifc_type == "IfcSpace"
 
     def test_source_row_is_completed(self, db: Session, tmp_path: Path, captured_events):
         d, _ = _make_drawing(db)
@@ -117,8 +128,10 @@ class TestExtractFromDxf:
         assert src.producer_name == extract.PRODUCER_NAME
         assert src.started_at is not None
         assert src.finished_at is not None
-        assert src.summary["elements_written"] == 6
+        assert src.summary["elements_written"] == 7
         assert src.summary["elements_by_kind"]["wall"] == 4
+        assert src.summary["connectivity"]["hosted_doors"] == 1
+        assert src.summary["connectivity"]["derived_rooms"] == 1
 
     def test_publishes_started_and_completed_events(
         self, db: Session, tmp_path: Path, captured_events
@@ -132,7 +145,7 @@ class TestExtractFromDxf:
         assert types[-1] == "extraction.completed"
         # Final completed event carries the summary.
         last = captured_events[-1][1]
-        assert last["summary"]["elements_written"] == 6
+        assert last["summary"]["elements_written"] == 7
         # Channel-key is the drawing id, not a string we made up.
         assert all(drawing_id == d.id for drawing_id, _ in captured_events)
 

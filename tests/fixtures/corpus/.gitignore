@@ -1,0 +1,10 @@
+# Tier 2 / Tier 3 — license-encumbered or large; never committed.
+tier2/**
+tier3/**
+
+# Allow the directory + per-tier README placeholders so the structure
+# survives in the repo even when no files are present.
+!tier2/.gitkeep
+!tier3/.gitkeep
+!tier2/README.md
+!tier3/README.md
