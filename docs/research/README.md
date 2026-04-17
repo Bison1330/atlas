@@ -52,7 +52,8 @@ own prefix so they don't collide with the core M2 sequence):
 | [m4-phase3-procurement.md](./m4-phase3-procurement.md) — real-drawing corpus punch list | answered |
 | [m5-design-intent-qa.md](./m5-design-intent-qa.md) — Q&A scope, citation contract, eval plan | answered |
 | [m6-annotations.md](./m6-annotations.md) — thin review slice: element annotations, no auth | answered |
-| [m7-basic-auth.md](./m7-basic-auth.md) — basic email/password auth + drawing ownership | in progress |
+| [m7-basic-auth.md](./m7-basic-auth.md) — basic email/password auth + drawing ownership | answered |
+| [m8-projects.md](./m8-projects.md) — thin collaboration slice: projects + flat membership | in progress |
 
 Add more as questions surface. Don't pre-create stubs we don't intend
 to fill — empty research notes rot.
