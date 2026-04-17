@@ -186,3 +186,125 @@ export function tileUrl(
 ): string {
   return `${API_BASE}/drawings/${drawingId}/sheets/${sheetId}/tiles/${zoom}/${col}/${row}.webp`;
 }
+
+// ---------- M2: extractions + elements ----------
+
+export type ExtractionStatus = "queued" | "running" | "completed" | "failed";
+
+export const EXTRACTION_TERMINAL: ReadonlySet<ExtractionStatus> = new Set([
+  "completed",
+  "failed",
+]);
+
+export interface ExtractionRunSummary {
+  id: string;
+  drawing_id: string;
+  source_kind: string;
+  producer_name: string;
+  producer_version: string;
+  status: ExtractionStatus;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  params: Record<string, unknown>;
+  summary: Record<string, unknown>;
+}
+
+export interface ElementSummary {
+  id: string;
+  sheet_id: string;
+  source_id: string;
+  kind: string;
+  name: string | null;
+  number: string | null;
+  confidence: number | null;
+  ifc_type: string | null;
+  ncs_layer: string | null;
+  ncs_major_group: string | null;
+  ncs_minor_group: string | null;
+  bbox: { minx: number; miny: number; maxx: number; maxy: number } | null;
+  host_element_id: string | null;
+}
+
+export interface ElementDetail extends ElementSummary {
+  geometry: Record<string, unknown>;
+  attrs: Record<string, unknown>;
+  ifc_properties: Record<string, Record<string, unknown>>;
+}
+
+export async function uploadDxf(
+  drawingId: string,
+  file: File,
+  opts: {
+    signal?: AbortSignal;
+    onProgress?: (loaded: number, total: number) => void;
+  } = {},
+): Promise<ExtractionRunSummary> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append("file", file);
+    xhr.open("POST", `${API_BASE}/drawings/${drawingId}/extract`);
+    xhr.responseType = "json";
+    if (opts.onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) opts.onProgress!(e.loaded, e.total);
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response as ExtractionRunSummary);
+      } else {
+        reject(new ApiClientError(xhr.status, xhr.response ?? xhr.statusText));
+      }
+    };
+    xhr.onerror = () => reject(new ApiClientError(0, "Network error"));
+    xhr.onabort = () => reject(new ApiClientError(0, "Upload cancelled"));
+    if (opts.signal) {
+      opts.signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+    xhr.send(form);
+  });
+}
+
+export async function getExtractions(
+  drawingId: string,
+  signal?: AbortSignal,
+): Promise<{ drawing_id: string; count: number; extractions: ExtractionRunSummary[] }> {
+  const res = await fetch(`${API_BASE}/drawings/${drawingId}/extractions`, { signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+export interface GetElementsOpts {
+  source_id?: string;
+  kind?: string[];
+  ncs_major_group?: string[];
+  include?: ("geometry")[];
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export async function getElements(
+  drawingId: string,
+  opts: GetElementsOpts = {},
+): Promise<{
+  drawing_id: string;
+  count: number;
+  elements: (ElementSummary | ElementDetail)[];
+}> {
+  const params = new URLSearchParams();
+  if (opts.source_id) params.append("source_id", opts.source_id);
+  for (const k of opts.kind ?? []) params.append("kind", k);
+  for (const g of opts.ncs_major_group ?? []) params.append("ncs_major_group", g);
+  for (const i of opts.include ?? []) params.append("include", i);
+  if (opts.limit != null) params.append("limit", String(opts.limit));
+  const q = params.toString();
+  const url = `${API_BASE}/drawings/${drawingId}/elements${q ? `?${q}` : ""}`;
+  const res = await fetch(url, { signal: opts.signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}

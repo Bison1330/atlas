@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
+import { ExtractionsSection } from "@/components/extraction/ExtractionsSection";
 import { ProgressView } from "@/components/progress/ProgressView";
 import { ViewerView } from "@/components/viewer/ViewerView";
 import { ApiClientError, DrawingStatus, DrawingSummary, getDrawing, getDrawingStatus } from "@/lib/api";
@@ -65,7 +66,10 @@ export default function DrawingPage({ params }: { params: Promise<{ id: string }
         )}
 
         {!error && bootstrapped && summary ? (
-          <ViewerView drawing={summary} />
+          <>
+            <ViewerView drawing={summary} />
+            <ExtractionsSection drawingId={id} />
+          </>
         ) : !error && bootstrapped ? (
           <ProgressView
             drawingId={id}
