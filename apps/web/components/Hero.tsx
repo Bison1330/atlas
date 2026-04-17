@@ -26,10 +26,10 @@ export function Hero() {
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <a
-            href="#capabilities"
+            href="/upload"
             className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-bg-base transition-colors hover:bg-accent-dim"
           >
-            See what it does
+            Try the ingest pipeline
             <svg
               width="14"
               height="14"

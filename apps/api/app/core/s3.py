@@ -58,3 +58,13 @@ def ensure_bucket() -> None:
 def drawing_source_key(drawing_id: str) -> str:
     prefix = get_settings().s3_drawings_prefix.strip("/")
     return f"{prefix}/{drawing_id}/source.pdf"
+
+
+def sheet_preview_key(drawing_id: str, sheet_id: str) -> str:
+    prefix = get_settings().s3_drawings_prefix.strip("/")
+    return f"{prefix}/{drawing_id}/sheets/{sheet_id}/preview.webp"
+
+
+def tile_key(drawing_id: str, sheet_id: str, zoom: int, col: int, row: int) -> str:
+    prefix = get_settings().s3_drawings_prefix.strip("/")
+    return f"{prefix}/{drawing_id}/sheets/{sheet_id}/tiles/{zoom}/{col}/{row}.webp"
