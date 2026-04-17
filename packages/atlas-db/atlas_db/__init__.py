@@ -1,9 +1,10 @@
 """Atlas shared ORM."""
 
 from atlas_db.base import Base, TimestampMixin
-from atlas_db.models import Drawing, Element, ElementSource, Sheet, Tile
+from atlas_db.models import Annotation, Drawing, Element, ElementSource, Sheet, Tile
 
 __all__ = [
+    "Annotation",
     "Base",
     "Drawing",
     "Element",
@@ -13,4 +14,4 @@ __all__ = [
     "TimestampMixin",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
