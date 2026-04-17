@@ -28,10 +28,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth_dep import owned_drawing_for_read, require_csrf
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.db import Drawing, Element, ElementSource, Sheet
-from app.schemas.errors import NotFoundError, ServiceError
+from app.schemas.errors import ServiceError
 from app.services import qa as qa_svc
 from app.services.qa_interpreter import ClaudeInterpreter
 
@@ -137,15 +138,13 @@ def _get_interpreter() -> qa_svc.Interpreter:
 def ask_drawing(
     drawing_id: UUID,
     body: AskRequest,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
     interpreter: Annotated[
         qa_svc.Interpreter, Depends(_get_interpreter)
     ] = None,  # type: ignore[assignment]
 ) -> AskResponse:
-    drawing = db.get(Drawing, drawing_id)
-    if drawing is None:
-        raise NotFoundError("Drawing", str(drawing_id))
-
     source_id = body.source_id or _latest_completed_source_id(db, drawing_id)
     elements: list[Element] = []
     if source_id is not None:

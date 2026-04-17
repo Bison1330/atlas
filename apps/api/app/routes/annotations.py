@@ -29,8 +29,15 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.core.auth_dep import (
+    current_user,
+    owned_drawing_for_read,
+    owned_drawing_for_write,
+    require_csrf,
+)
 from app.core.db import get_db
-from app.db import Annotation
+from app.db import Annotation, Drawing, Element, Sheet, User
+from app.schemas.errors import APIError, NotFoundError
 from app.services import annotations as svc
 
 drawing_router = APIRouter(prefix="/drawings", tags=["annotations"])
@@ -93,6 +100,43 @@ class AnnotationsListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _drawing_for_element(
+    session: Session, element_id: UUID,
+) -> Drawing:
+    """Resolve an element → its sheet → its drawing.
+
+    Shared helper for endpoints that key off ``element_id`` or
+    ``annotation_id`` rather than ``drawing_id`` — used for the
+    auth check (caller must own the drawing that the element
+    belongs to). Raises 404 when the chain is broken at any link.
+    """
+    element = session.get(Element, element_id)
+    if element is None:
+        raise NotFoundError("Element", str(element_id))
+    sheet = session.get(Sheet, element.sheet_id)
+    if sheet is None:
+        raise NotFoundError("Sheet", str(element.sheet_id))
+    drawing = session.get(Drawing, sheet.drawing_id)
+    if drawing is None:
+        raise NotFoundError("Drawing", str(sheet.drawing_id))
+    return drawing
+
+
+def _require_drawing_owner(drawing: Drawing, user: User) -> None:
+    """Owner-only write gate; 404 if the drawing belongs to someone else."""
+    if drawing.owner_id is None:
+        raise APIError(
+            code="drawing_unclaimed",
+            message=(
+                f"Drawing {drawing.id} is unclaimed. Claim it first via "
+                f"POST /drawings/{drawing.id}/claim."
+            ),
+            status_code=409,
+        )
+    if drawing.owner_id != user.id:
+        raise NotFoundError("Drawing", str(drawing.id))
+
+
 def _to_out(session: Session, ann: Annotation) -> AnnotationOut:
     meta = svc.element_extraction_meta(session, ann.element_id)
     return AnnotationOut(
@@ -121,6 +165,8 @@ def _to_out(session: Session, ann: Annotation) -> AnnotationOut:
 def create_annotation(
     drawing_id: UUID,
     body: AnnotationIn,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_write)],
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> AnnotationOut:
     ann = svc.create_annotation(
@@ -140,6 +186,7 @@ def create_annotation(
 )
 def list_drawing_annotations(
     drawing_id: UUID,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
     element_id: Annotated[
         UUID | None,
         Query(description="Filter to a single element."),
@@ -161,8 +208,15 @@ def list_drawing_annotations(
 )
 def list_element_annotations(
     element_id: UUID,
+    user: Annotated[User, Depends(current_user)],
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> AnnotationsListResponse:
+    # Resolve the element's drawing and enforce read access (owner
+    # or unclaimed). Unclaimed is OK for reads since the caller
+    # could go on to claim the drawing if they wanted to annotate.
+    drawing = _drawing_for_element(db, element_id)
+    if drawing.owner_id is not None and drawing.owner_id != user.id:
+        raise NotFoundError("Element", str(element_id))
     rows = svc.list_for_element(db, element_id)
     return AnnotationsListResponse(
         element_id=element_id,
@@ -178,8 +232,15 @@ def list_element_annotations(
 def patch_annotation(
     annotation_id: UUID,
     body: AnnotationUpdate,
+    user: Annotated[User, Depends(current_user)],
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> AnnotationOut:
+    existing = svc.get_annotation(db, annotation_id)
+    drawing = db.get(Drawing, existing.drawing_id)
+    if drawing is None:
+        raise NotFoundError("Annotation", str(annotation_id))
+    _require_drawing_owner(drawing, user)
     ann = svc.update_annotation(
         db,
         annotation_id,
@@ -196,6 +257,13 @@ def patch_annotation(
 )
 def delete_annotation(
     annotation_id: UUID,
+    user: Annotated[User, Depends(current_user)],
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> None:
+    existing = svc.get_annotation(db, annotation_id)
+    drawing = db.get(Drawing, existing.drawing_id)
+    if drawing is None:
+        raise NotFoundError("Annotation", str(annotation_id))
+    _require_drawing_owner(drawing, user)
     svc.delete_annotation(db, annotation_id)

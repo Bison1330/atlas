@@ -25,8 +25,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth_dep import owned_drawing_for_read
 from app.core.db import get_db
-from app.db import Element, ElementSource, Sheet
+from app.db import Drawing, Element, ElementSource, Sheet
 from app.services.takeoffs import compute_takeoff
 
 router = APIRouter(prefix="/drawings", tags=["takeoffs"])
@@ -78,6 +79,7 @@ class TakeoffResponse(BaseModel):
 )
 def get_takeoffs(
     drawing_id: UUID,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
     source_id: Annotated[
         UUID | None,
         Query(description="Specific extraction run; defaults to latest completed."),

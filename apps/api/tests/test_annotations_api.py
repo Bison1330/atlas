@@ -33,9 +33,11 @@ def _seed_drawing_with_element(
     Returns the IDs so tests can hit endpoints without re-fetching.
     """
     suffix = content_hash_suffix or uuid4().hex[:8]
+    from tests.conftest import TEST_USER_ID
     d = Drawing(
         source_filename="x.dxf", source_s3_key="k", size_bytes=1,
         content_hash=f"sha256:ann-{suffix}",
+        owner_id=TEST_USER_ID,
     )
     db.add(d)
     db.flush()

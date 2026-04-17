@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from app.db import Drawing, ElementSource, Sheet
 from app.main import app
 from app.services import extractions as extractions_service
+from tests.conftest import TEST_USER_ID
 
 
 @pytest.fixture()
@@ -45,7 +46,8 @@ def _make_drawing_with_sheet(db) -> tuple[Drawing, Sheet]:
     d = Drawing(
         source_filename="x.pdf", source_s3_key="drawings/x/source.pdf",
         size_bytes=1, content_hash="sha256:test",
-    )
+            owner_id=TEST_USER_ID,
+        )
     db.add(d)
     db.flush()
     s = Sheet(drawing_id=d.id, page_number=1)
@@ -106,6 +108,7 @@ class TestValidationErrors:
         d = Drawing(
             source_filename="x.pdf", source_s3_key="k", size_bytes=1,
             content_hash="sha256:y",
+                    owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.commit()
@@ -204,9 +207,8 @@ class TestListExtractions:
         versions = [e["producer_version"] for e in body["extractions"]]
         assert versions == ["0.3.0", "0.2.0", "0.1.0"]
 
-    def test_listing_unknown_drawing_returns_empty(self, db, client):
-        # Same liberal contract as GET /drawings/{id}/elements — caller
-        # already knows the id, no need to confirm existence here.
+    def test_listing_unknown_drawing_returns_404(self, db, client):
+        # M7: ownership-resolution 404s unknown drawings.
         r = client.get(f"/drawings/{uuid4()}/extractions")
-        assert r.status_code == 200
-        assert r.json()["count"] == 0
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "not_found"

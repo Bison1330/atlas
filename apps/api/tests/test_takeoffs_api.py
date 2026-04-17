@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.db import Drawing, Element, ElementSource, Sheet
 from app.main import app
+from tests.conftest import TEST_USER_ID
 
 
 @pytest.fixture()
@@ -31,6 +32,7 @@ def _seed(db, *, walls: int = 0, rooms: int = 0, doors: int = 0) -> dict:
     d = Drawing(
         source_filename="x.dxf", source_s3_key="k", size_bytes=1,
         content_hash=f"sha256:takeoff-{uuid4().hex[:8]}",
+        owner_id=TEST_USER_ID,
     )
     db.add(d)
     db.flush()
@@ -110,6 +112,7 @@ class TestTakeoffsApi:
         d = Drawing(
             source_filename="x.dxf", source_s3_key="k", size_bytes=1,
             content_hash="sha256:no-extraction",
+                    owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.commit()
@@ -120,16 +123,17 @@ class TestTakeoffsApi:
         assert body["total_elements"] == 0
         assert body["categories"] == []
 
-    def test_unknown_drawing_returns_empty(self, client):
+    def test_unknown_drawing_returns_404(self, client):
+        # M7: ownership-resolution 404s unknown drawings.
         r = client.get(f"/drawings/{uuid4()}/takeoffs")
-        assert r.status_code == 200
-        assert r.json()["total_elements"] == 0
-        assert r.json()["source_id"] is None
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "not_found"
 
     def test_ignores_running_and_failed_runs(self, client, db):
         d = Drawing(
             source_filename="x.dxf", source_s3_key="k", size_bytes=1,
             content_hash="sha256:status-filter",
+                    owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.flush()
@@ -216,6 +220,7 @@ class TestSubcategories:
         d = Drawing(
             source_filename="x.dxf", source_s3_key="k", size_bytes=1,
             content_hash="sha256:wall-subs",
+                    owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.flush()

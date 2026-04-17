@@ -25,7 +25,9 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.auth_dep import current_user, owned_drawing_for_read, require_csrf
 from app.core.db import get_db
+from app.db import Drawing, User
 from app.services.drawings import (
     create_drawing_from_upload,
     drawing_to_summary,
@@ -66,10 +68,14 @@ def _status_etag(drawing) -> str:
 )
 async def upload_drawing(
     file: Annotated[UploadFile, File(description="PDF file to ingest.")],
+    user: Annotated[User, Depends(current_user)],
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
     project_name: Annotated[str | None, Form()] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> DrawingSummary:
-    drawing = await create_drawing_from_upload(db, file, project_name=project_name)
+    drawing = await create_drawing_from_upload(
+        db, file, project_name=project_name, owner_id=user.id,
+    )
     return drawing_to_summary(drawing)
 
 
@@ -83,12 +89,10 @@ async def upload_drawing(
     summary="Lightweight status for polling",
 )
 def drawing_status(
-    drawing_id: UUID,
+    drawing: Annotated[Drawing, Depends(owned_drawing_for_read)],
     request: Request,
     if_none_match: Annotated[str | None, Header()] = None,
-    db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> Response:
-    drawing = get_drawing(db, drawing_id)
     etag = _status_etag(drawing)
 
     if if_none_match is not None and if_none_match == etag:
@@ -121,6 +125,7 @@ def drawing_status(
 )
 def drawing_detail(
     drawing_id: UUID,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> Response:
     drawing = get_drawing(db, drawing_id, with_sheets=True)

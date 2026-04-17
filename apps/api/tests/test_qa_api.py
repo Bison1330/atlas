@@ -20,6 +20,7 @@ from app.main import app
 from app.routes.qa import _get_interpreter
 from app.services.qa import QueryInterpretation
 from app.services.qa_interpreter import FakeInterpreter
+from tests.conftest import TEST_USER_ID
 
 
 @pytest.fixture()
@@ -49,6 +50,7 @@ def _seed_one_room_floor(db) -> dict:
     d = Drawing(
         source_filename="x.dxf", source_s3_key="k", size_bytes=1,
         content_hash=f"sha256:qa-{uuid4().hex[:8]}",
+        owner_id=TEST_USER_ID,
     )
     db.add(d)
     db.flush()
@@ -265,6 +267,7 @@ class TestAskWithoutExtraction:
         d = Drawing(
             source_filename="x.dxf", source_s3_key="k", size_bytes=1,
             content_hash=f"sha256:no-src-{uuid4().hex[:8]}",
+            owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.commit()

@@ -15,6 +15,7 @@ from atlas_db import (
     Sheet,
     Tile,
     TimestampMixin,
+    User,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "Sheet",
     "Tile",
     "TimestampMixin",
+    "User",
 ]

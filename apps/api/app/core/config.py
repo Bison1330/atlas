@@ -47,6 +47,26 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-haiku-4-5-20251001"
 
+    # M7 auth.
+    # ``session_secret`` signs the opaque session-id cookie. Rotating
+    # it invalidates all live sessions by design. MUST be set in
+    # production (any non-empty string); dev / test generate a
+    # random one on startup if absent.
+    session_secret: str | None = None
+    session_ttl_seconds: int = 14 * 24 * 3600  # 14 days
+    session_cookie_name: str = "atlas_session"
+    csrf_cookie_name: str = "atlas_csrf"
+    csrf_header_name: str = "X-Atlas-CSRF"
+
+    # Password policy — kept narrow by design (NIST SP 800-63B).
+    password_min_length: int = 10
+
+    # Auth rate limits — Redis-backed sliding windows.
+    login_max_attempts: int = 5
+    login_window_seconds: int = 15 * 60
+    register_max_attempts: int = 3
+    register_window_seconds: int = 60 * 60
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
