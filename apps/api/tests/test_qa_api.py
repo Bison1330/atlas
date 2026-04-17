@@ -286,3 +286,43 @@ class TestAskWithoutExtraction:
         assert body["citations"] == []
         assert body["meta"]["source_id"] is None
         assert "0" in body["answer"]
+
+
+class TestAskRateLimit:
+    """Rate limit (D-20-C): 20/min/user on /ask."""
+
+    def test_21st_ask_in_one_minute_returns_429(self, client, db, with_interpreter):
+        from app.core import redis as redis_mod
+        redis_mod.get_redis().flushdb()
+
+        d = Drawing(
+            source_filename="x.dxf", source_s3_key="k", size_bytes=1,
+            content_hash=f"sha256:rl-{uuid4().hex[:8]}",
+            owner_id=TEST_USER_ID,
+        )
+        db.add(d)
+        db.commit()
+
+        with_interpreter({
+            "how many walls?": QueryInterpretation(
+                bucket="count", filter={"kind": "wall"},
+            ),
+        })
+
+        # First 20 requests succeed.
+        for _ in range(20):
+            r = client.post(
+                f"/drawings/{d.id}/ask",
+                json={"question": "how many walls?"},
+            )
+            assert r.status_code == 200
+
+        # 21st trips the limit.
+        r = client.post(
+            f"/drawings/{d.id}/ask",
+            json={"question": "how many walls?"},
+        )
+        assert r.status_code == 429
+        body = r.json()
+        assert body["error"]["code"] == "rate_limited"
+        assert body["error"]["details"]["retry_after_seconds"] > 0

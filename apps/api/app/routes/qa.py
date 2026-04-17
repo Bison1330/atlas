@@ -23,16 +23,17 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.auth_dep import owned_drawing_for_read, require_csrf
+from app.core.auth_dep import current_user, owned_drawing_for_read, require_csrf
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.db import Drawing, Element, ElementSource, Sheet
-from app.schemas.errors import ServiceError
+from app.core.rate_limit import check_and_increment
+from app.db import Drawing, Element, ElementSource, Sheet, User
+from app.schemas.errors import APIError, ServiceError
 from app.services import qa as qa_svc
 from app.services.qa_interpreter import ClaudeInterpreter
 
@@ -138,6 +139,8 @@ def _get_interpreter() -> qa_svc.Interpreter:
 def ask_drawing(
     drawing_id: UUID,
     body: AskRequest,
+    user: Annotated[User, Depends(current_user)],
+    response: Response,
     _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
     _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
@@ -145,6 +148,26 @@ def ask_drawing(
         qa_svc.Interpreter, Depends(_get_interpreter)
     ] = None,  # type: ignore[assignment]
 ) -> AskResponse:
+    # Per-user Q&A rate limit (D-20-C). Protects ANTHROPIC_API_KEY
+    # budget from authenticated-spam — auth + CSRF gate who can hit
+    # the endpoint, but a logged-in user can still burn tokens.
+    # 20/min is generous for real use (one question every 3s steady
+    # state) and tight enough to deter scripting.
+    current_count, limit, retry_after = check_and_increment(
+        scope="qa:ask",
+        identifier=str(user.id),
+        limit=20,
+        window_seconds=60,
+    )
+    if current_count > limit:
+        response.headers["Retry-After"] = str(retry_after)
+        raise APIError(
+            code="rate_limited",
+            message="Too many questions in a short period. Try again in a minute.",
+            status_code=429,
+            details={"retry_after_seconds": retry_after},
+        )
+
     source_id = body.source_id or _latest_completed_source_id(db, drawing_id)
     elements: list[Element] = []
     if source_id is not None:

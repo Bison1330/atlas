@@ -428,6 +428,69 @@ export async function getTakeoffs(
 }
 
 
+// ---------- M5: Q&A ----------
+
+
+export type AnswerBucket =
+  | "count"
+  | "quantity"
+  | "rank"
+  | "adjacency"
+  | "lookup"
+  | "unsupported";
+
+
+export type AnswerCertainty = "high" | "medium" | "low";
+
+
+export interface AskCitation {
+  element_id: string;
+  sheet_id: string;
+  kind: string;
+  ncs_layer: string | null;
+  bbox: { minx: number; miny: number; maxx: number; maxy: number } | null;
+  display_label: string;
+}
+
+
+export interface AskResponse {
+  answer: string;
+  answer_type: AnswerBucket;
+  citations: AskCitation[];
+  query_interpretation: {
+    bucket: string;
+    filter: Record<string, unknown>;
+    unsupported_reason: string | null;
+    suggested_phrasing: string | null;
+  };
+  confidence: {
+    extraction_min: number | null;
+    answer_certainty: AnswerCertainty;
+  };
+  meta: {
+    source_id: string | null;
+    extraction_status: string;
+    interpreter_model: string | null;
+  };
+}
+
+
+export async function askDrawing(
+  drawingId: string,
+  question: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<AskResponse> {
+  const res = await fetchApi(`/drawings/${drawingId}/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+    signal: opts.signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
 // ---------- M7: auth ----------
 
 
