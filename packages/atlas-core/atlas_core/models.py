@@ -5,13 +5,29 @@ drawing package. Each sheet carries a list of typed `DrawingElement`s
 (rooms, walls, doors, windows, etc.) along with their geometry.
 
 These models are the canonical exchange format between the ingest
-pipeline, the analyzers, and the API layer.
+pipeline, the analyzers, and the API layer. Per the M2 research
+findings (see ``docs/research/decisions.md``):
+
+- **IFC compatibility.** Every element carries an optional IFC entity
+  type (``ifc_type``, e.g. ``"IfcWallStandardCase"``) and a free-form
+  ``ifc_properties`` mapping for IFC property sets like
+  ``Pset_WallCommon``. We don't validate the inner shape of property
+  sets — buildingSMART's catalog is huge and evolving — but we
+  reserve the surface so importers/exporters have a stable home.
+- **NCS layer classification.** When extraction starts from CAD
+  layers following the National CAD Standard, we capture the raw
+  layer string plus the parsed major/minor groups. These are
+  first-class fields (not buried in ``properties``) so they can be
+  indexed at the storage layer.
+- **Confidence is nullable.** ``None`` means "not probabilistic"
+  (deterministic extraction or human authoring); a float in [0, 1]
+  is the extractor's belief. See D-05.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,8 +42,23 @@ class _ElementBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: UUID = Field(default_factory=uuid4)
-    source_layer: str | None = None
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    # Provenance & confidence — see D-05.
+    confidence: float | None = Field(default=1.0, ge=0.0, le=1.0)
+    source_layer: str | None = None  # raw layer name (CAD or PDF), pre-parse.
+
+    # NCS (US National CAD Standard) layer classification — see D-03.
+    # Layer names look like ``A-WALL-EXTR-FULL``:
+    # <discipline>-<major>-<minor>-<modifier>.
+    ncs_layer: str | None = None
+    ncs_major_group: str | None = Field(default=None, max_length=4)  # WALL, DOOR…
+    ncs_minor_group: str | None = Field(default=None, max_length=8)  # EXTR, INTR…
+
+    # IFC compatibility — see D-01.
+    ifc_type: str | None = None  # e.g. "IfcWallStandardCase", "IfcDoor".
+    ifc_properties: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # Spatial summary + free-form extractor-specific bag.
     bbox: BoundingBox | None = None
     properties: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 

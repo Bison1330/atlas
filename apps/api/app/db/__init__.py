@@ -6,6 +6,14 @@ the public names so existing imports (``from app.db import Drawing``)
 keep working.
 """
 
-from atlas_db import Base, Drawing, Sheet, Tile, TimestampMixin
+from atlas_db import Base, Drawing, Element, ElementSource, Sheet, Tile, TimestampMixin
 
-__all__ = ["Base", "Drawing", "Sheet", "Tile", "TimestampMixin"]
+__all__ = [
+    "Base",
+    "Drawing",
+    "Element",
+    "ElementSource",
+    "Sheet",
+    "Tile",
+    "TimestampMixin",
+]

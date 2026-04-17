@@ -199,3 +199,187 @@ class Tile(Base):
     )
 
     sheet: Mapped[Sheet] = relationship(back_populates="tiles")
+
+
+# ---------------------------------------------------------------------------
+# M2 — structured drawings
+# ---------------------------------------------------------------------------
+#
+# Decisions captured in /opt/atlas/docs/research/decisions.md:
+#   D-01: polymorphic ``elements`` table with kind + JSONB attrs.
+#   D-02: JSONB geometry; PostGIS deferred to M3.
+#   D-05: ``element_sources`` carries provenance + lifecycle for each
+#         extraction/generation/manual-override run.
+#   D-06: source_kind discriminator generalizes "extraction" to cover
+#         generated and human-authored elements too.
+
+_ELEMENT_SOURCE_KINDS = ("extraction", "generation", "manual_override")
+_ELEMENT_SOURCE_STATUSES = ("queued", "running", "completed", "failed")
+_ELEMENT_KINDS = (
+    "room",
+    "wall",
+    "door",
+    "window",
+    "column",
+    "stair",
+    "dimension",
+    "annotation",
+    "symbol",
+    "other",
+)
+
+
+class ElementSource(TimestampMixin, Base):
+    """One run of an element-producing pipeline against a drawing.
+
+    Every Element FKs to exactly one ElementSource. Re-running an
+    extractor inserts a new source + new elements; older ones stay
+    queryable so we can diff runs and compare extractor versions.
+    """
+
+    __tablename__ = "element_sources"
+    __table_args__ = (
+        CheckConstraint(
+            f"source_kind IN {_ELEMENT_SOURCE_KINDS}",
+            name="ck_element_sources_kind_valid",
+        ),
+        CheckConstraint(
+            f"status IN {_ELEMENT_SOURCE_STATUSES}",
+            name="ck_element_sources_status_valid",
+        ),
+        Index("ix_element_sources_drawing_id", "drawing_id"),
+        Index("ix_element_sources_status", "status"),
+        Index(
+            "ix_element_sources_drawing_finished",
+            "drawing_id",
+            "finished_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
+    drawing_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("drawings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    producer_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    producer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="queued", server_default="queued"
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Free-form JSONB so producers can record their config + output stats
+    # without us having to ALTER TABLE every time a new extractor adds a
+    # tunable.
+    params: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+
+    drawing: Mapped[Drawing] = relationship()
+    elements: Mapped[list[Element]] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class Element(TimestampMixin, Base):
+    """A polymorphic structured-drawing element.
+
+    See module-level note for the design rationale. Kind-specific
+    fields live in ``attrs`` JSONB (e.g. wall.thickness,
+    door.swing_angle_deg) — the canonical shape per kind is the
+    matching atlas_core Pydantic model.
+    """
+
+    __tablename__ = "elements"
+    __table_args__ = (
+        CheckConstraint(
+            f"kind IN {_ELEMENT_KINDS}",
+            name="ck_elements_kind_valid",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="ck_elements_confidence_range",
+        ),
+        Index("ix_elements_sheet_id", "sheet_id"),
+        Index("ix_elements_source_id", "source_id"),
+        Index("ix_elements_sheet_kind", "sheet_id", "kind"),
+        Index("ix_elements_ncs_major_group", "ncs_major_group"),
+        Index("ix_elements_host_element_id", "host_element_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
+    sheet_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("sheets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("element_sources.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # Display + identity attributes used across kinds.
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Provenance: confidence is NULL when the producer is deterministic
+    # or human (vs. a probabilistic extractor).
+    confidence: Mapped[float | None] = mapped_column(nullable=True)
+    source_layer: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    # NCS classification (US National CAD Standard) — first-class so we
+    # can index ``WHERE ncs_major_group = 'WALL'`` without parsing JSONB.
+    ncs_layer: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ncs_major_group: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    ncs_minor_group: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    # IFC compatibility — uniform property-set surface across all kinds.
+    ifc_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ifc_properties: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+
+    # Geometry + spatial summary. Both are JSONB per D-02; PostGIS
+    # migration deferred to M3.
+    geometry: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    bbox: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    # Kind-specific bag (wall.thickness, door.swing_angle_deg, …).
+    attrs: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+
+    # Hosting relationship: doors and windows reference their parent wall.
+    host_element_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("elements.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    sheet: Mapped[Sheet] = relationship()
+    source: Mapped[ElementSource] = relationship(back_populates="elements")
+    host: Mapped[Element | None] = relationship(
+        remote_side="Element.id", foreign_keys=[host_element_id]
+    )

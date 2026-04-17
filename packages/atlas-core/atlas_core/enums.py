@@ -76,3 +76,24 @@ class ElementKind(StrEnum):
     ANNOTATION = "annotation"
     SYMBOL = "symbol"
     OTHER = "other"
+
+
+class ElementSourceKind(StrEnum):
+    """How an element came into existence — see D-05/D-06."""
+
+    EXTRACTION = "extraction"  # produced by an extractor (NCS parser, OCR, CV…)
+    GENERATION = "generation"  # produced by a generative pipeline
+    MANUAL_OVERRIDE = "manual_override"  # human authoring or correction
+
+
+class ElementSourceStatus(StrEnum):
+    """Lifecycle of an ``element_sources`` row."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {ElementSourceStatus.COMPLETED, ElementSourceStatus.FAILED}

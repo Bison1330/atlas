@@ -1,6 +1,13 @@
 """Atlas shared domain model."""
 
-from atlas_core.enums import ElementKind, IngestStatus, SheetDiscipline, Units
+from atlas_core.enums import (
+    ElementKind,
+    ElementSourceKind,
+    ElementSourceStatus,
+    IngestStatus,
+    SheetDiscipline,
+    Units,
+)
 from atlas_core.geometry import BoundingBox, Point, Polygon, Polyline
 from atlas_core.ingest import (
     DrawingSummary,
@@ -24,6 +31,8 @@ __all__ = [
     "DrawingElement",
     "DrawingSummary",
     "ElementKind",
+    "ElementSourceKind",
+    "ElementSourceStatus",
     "IngestStatus",
     "IngestStatusEvent",
     "Point",
@@ -40,4 +49,4 @@ __all__ = [
     "Window",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
