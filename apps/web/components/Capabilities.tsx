@@ -2,7 +2,7 @@ const items = [
   {
     title: "Structured drawings",
     body: "A schema-typed view of a sheet: rooms, walls, doors, windows, columns, dimensions. Not pixels — objects with geometry and confidence.",
-    tag: "atlas-core",
+    tag: "M2 · live",
   },
   {
     title: "Coordination checks",
