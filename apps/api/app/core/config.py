@@ -41,6 +41,12 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Anthropic API for M5 Q&A. When missing, the /ask endpoint
+    # returns 503; everything else works. This lets local dev and
+    # CI run without provisioning a key.
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

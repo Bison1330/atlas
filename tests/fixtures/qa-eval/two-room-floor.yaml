@@ -1,0 +1,31 @@
+name: two-room-floor-qa
+description: |
+  Two 5x10 rooms split at x=5, single exterior door on the south
+  wall. No door connects the two rooms — a "not connected" adjacency
+  case.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_two_room_floor
+pairs:
+  - question: "How many exterior walls are there?"
+    expected:
+      bucket: count
+      # 4 exterior walls on A-WALL-EXTR (interior partition is INTR)
+      citation_count: 4
+      citation_kinds: [wall]
+      answer_regex: "\\b4\\b"
+
+  - question: "Is room 1 adjacent to room 2?"
+    expected:
+      bucket: adjacency
+      # No door between them → "No" / "not connected"
+      answer_regex: "(No|not)"
+
+  - question: "What is the smallest room?"
+    expected:
+      bucket: rank
+      citation_count: 1
+      citation_kinds: [room]
+      # Both rooms are 50 — a tie. Expect the service to return a
+      # single room (any of them) with medium certainty.
+      answer_regex: "(50|smallest|room)"
