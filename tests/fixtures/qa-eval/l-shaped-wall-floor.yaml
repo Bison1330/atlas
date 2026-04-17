@@ -1,0 +1,23 @@
+name: l-shaped-wall-floor-qa
+description: |
+  L-shaped room (area 51) where one exterior wall is a 4-vertex
+  LWPOLYLINE. Tests that M5 sees the G-R5 post-pass correctly —
+  the single derived room has the L-shaped area, not the chord-
+  collapse 65.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_l_shaped_wall_floor
+pairs:
+  - question: "How many rooms?"
+    expected:
+      bucket: count
+      citation_count: 1
+      citation_kinds: [room]
+      answer_regex: "\\b1\\b"
+
+  - question: "What is the area of the largest room?"
+    expected:
+      bucket: rank
+      citation_count: 1
+      citation_kinds: [room]
+      answer_regex: "\\b51"

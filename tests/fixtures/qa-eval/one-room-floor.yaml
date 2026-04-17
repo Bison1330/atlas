@@ -1,0 +1,35 @@
+name: one-room-floor-qa
+description: |
+  Basic count / quantity / rank / lookup questions on the simplest
+  fixture — a single 10x8 room defined by 4 walls plus a door arc
+  on the south wall.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_one_room_floor
+pairs:
+  - question: "How many walls are on this drawing?"
+    expected:
+      bucket: count
+      citation_count: 4
+      citation_kinds: [wall]
+      answer_regex: "\\b4\\b"
+
+  - question: "How many doors are there?"
+    expected:
+      bucket: count
+      citation_count: 1
+      citation_kinds: [door]
+      answer_regex: "\\b1\\b"
+
+  - question: "What is the total length of all walls?"
+    expected:
+      bucket: quantity
+      citation_count: 4
+      answer_regex: "\\b36"
+
+  - question: "How big is the largest room?"
+    expected:
+      bucket: rank
+      citation_count: 1
+      citation_kinds: [room]
+      answer_regex: "(80|largest)"

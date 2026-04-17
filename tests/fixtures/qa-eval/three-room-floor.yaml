@@ -1,0 +1,60 @@
+name: three-room-floor-qa
+description: |
+  Questions over the canonical 3-room fixture: R1+R2 (area 25 each)
+  on top, R3 (area 50) on bottom, doors D1 and D2 connect R1↔R3
+  and R2↔R3 respectively. R1 and R2 share a wall but no door.
+
+  Room ordering in the service is area-desc, so:
+    room 1 = R3 (50)
+    room 2 = R1 or R2 (25) — any tie-break is fine
+    room 3 = the other of R1/R2
+
+  Questions here exercise all 5 buckets.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_three_room_floor
+pairs:
+  - question: "How many rooms are in this drawing?"
+    expected:
+      bucket: count
+      citation_count: 3
+      citation_kinds: [room]
+      answer_regex: "\\b3\\b"
+
+  - question: "How many interior walls are there?"
+    expected:
+      bucket: count
+      # 2 interior partitions in the three-room fixture
+      citation_count: 2
+      citation_kinds: [wall]
+      answer_regex: "\\b2\\b"
+
+  - question: "What is the total area of all rooms?"
+    expected:
+      bucket: quantity
+      citation_count: 3
+      # 25 + 25 + 50 = 100
+      answer_regex: "\\b100\\b"
+
+  - question: "Which room is the largest?"
+    expected:
+      bucket: rank
+      citation_count: 1
+      citation_kinds: [room]
+      # R3 has area 50; answer should mention either the area or
+      # the word "largest".
+      answer_regex: "(50|largest)"
+
+  - question: "Is room 1 connected to room 2?"
+    expected:
+      bucket: adjacency
+      # Room 1 (R3) is door-connected to Rooms 2 and 3 (R1, R2).
+      # Expect "Yes" + citations for both rooms + the bridging door.
+      answer_regex: "(Yes|connected)"
+
+  - question: "What is the area of room 1?"
+    expected:
+      bucket: lookup
+      citation_count: 1
+      citation_kinds: [room]
+      answer_regex: "\\b50\\b"
