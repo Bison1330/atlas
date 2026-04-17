@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import { AppHeader } from "@/components/AppHeader";
+import { ChatPanel } from "@/components/chat/ChatPanel";
 import { ExtractionsSection } from "@/components/extraction/ExtractionsSection";
 import { ProgressView } from "@/components/progress/ProgressView";
 import { ViewerView } from "@/components/viewer/ViewerView";
@@ -46,38 +47,49 @@ export default function DrawingPage({ params }: { params: Promise<{ id: string }
     setSummary(full);
   }, []);
 
+  // With a complete drawing, split the viewport: scrollable main
+  // (viewer + extractions) on the left, Q&A chat panel on the right.
+  // During ingest / on errors we stick with the centered single-column
+  // layout.
+  const ready = !error && bootstrapped && summary;
+
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen flex flex-col">
       <AppHeader trail={`drawings / ${id.slice(0, 8)}`} />
 
-      <main className="mx-auto max-w-[1200px] px-3 py-6">
-        {error && (
-          <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.06] p-3">
-            <p className="text-sm text-text-primary">{error}</p>
-          </div>
-        )}
-
-        {!error && !bootstrapped && (
-          <div className="space-y-3">
-            <div className="h-7 w-1/3 animate-pulse rounded bg-bg-surface" />
-            <div className="h-32 animate-pulse rounded-xl bg-bg-surface" />
-            <div className="h-48 animate-pulse rounded-xl bg-bg-surface" />
-          </div>
-        )}
-
-        {!error && bootstrapped && summary ? (
-          <>
+      {ready ? (
+        <div className="flex-1 flex min-h-0">
+          <main className="flex-1 overflow-y-auto px-3 py-6 min-w-0">
             <ViewerView drawing={summary} />
             <ExtractionsSection drawingId={id} />
-          </>
-        ) : !error && bootstrapped ? (
-          <ProgressView
-            drawingId={id}
-            initialSnapshot={snapshot}
-            onCompleted={onCompleted}
-          />
-        ) : null}
-      </main>
+          </main>
+          <ChatPanel drawingId={id} />
+        </div>
+      ) : (
+        <main className="mx-auto max-w-[1200px] px-3 py-6 w-full">
+          {error && (
+            <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.06] p-3">
+              <p className="text-sm text-text-primary">{error}</p>
+            </div>
+          )}
+
+          {!error && !bootstrapped && (
+            <div className="space-y-3">
+              <div className="h-7 w-1/3 animate-pulse rounded bg-bg-surface" />
+              <div className="h-32 animate-pulse rounded-xl bg-bg-surface" />
+              <div className="h-48 animate-pulse rounded-xl bg-bg-surface" />
+            </div>
+          )}
+
+          {!error && bootstrapped && !summary && (
+            <ProgressView
+              drawingId={id}
+              initialSnapshot={snapshot}
+              onCompleted={onCompleted}
+            />
+          )}
+        </main>
+      )}
     </div>
   );
 }

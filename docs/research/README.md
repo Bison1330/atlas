@@ -55,7 +55,8 @@ own prefix so they don't collide with the core M2 sequence):
 | [m7-basic-auth.md](./m7-basic-auth.md) — basic email/password auth + drawing ownership | answered |
 | [m8-projects.md](./m8-projects.md) — thin collaboration slice: projects + flat membership | answered |
 | [atlas-web-m7-auth-ui.md](./atlas-web-m7-auth-ui.md) — frontend auth UI (login/register/me + CSRF flow) | answered |
-| [atlas-web-m2-drawings-ui.md](./atlas-web-m2-drawings-ui.md) — drawings list page + new GET /drawings endpoint | in progress |
+| [atlas-web-m2-drawings-ui.md](./atlas-web-m2-drawings-ui.md) — drawings list page + new GET /drawings endpoint | answered |
+| [atlas-web-m5-chat.md](./atlas-web-m5-chat.md) — Q&A chat panel on the viewer (sidebar, citation chips, caveat banner) | in progress |
 
 Add more as questions surface. Don't pre-create stubs we don't intend
 to fill — empty research notes rot.
