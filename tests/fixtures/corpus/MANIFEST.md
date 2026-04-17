@@ -29,7 +29,9 @@ Status legend:
 
 | Path | Status | Source | License | Stresses |
 |------|--------|--------|---------|----------|
-| `tier3/buildingsmart-*.ifc` | 🟡 | https://github.com/buildingSMART/Sample-Test-Files | Various OSS | IFC reader (M2 Phase 4+) |
+| `tier3/buildingsmart-pcert-building-architecture.ifc` | 📦 | https://github.com/buildingSMART/Sample-Test-Files | Apache-2.0 | IFC reader (when added); architectural |
+| `tier3/buildingsmart-pcert-building-hvac.ifc` | 📦 | (same repo) | Apache-2.0 | IFC reader; HVAC |
+| `tier3/buildingsmart-pcert-building-structural.ifc` | 📦 | (same repo) | Apache-2.0 | IFC reader; structural |
 | `tier3/permit-seattle-*.pdf` | 🟡 | Seattle SDCI permit portal | Public record | Real-world PDF rasterization |
 | `tier3/permit-portland-*.pdf` | 🟡 | Portland BDS portal | Public record | Real-world PDF rasterization |
 | `tier3/permit-sf-*.pdf` | 🟡 | SF DBI permit portal | Public record | Real-world PDF rasterization |

@@ -1,0 +1,21 @@
+name: two-room-floor
+description: |
+  10×10 footprint split vertically by an interior wall at x=5 into
+  two 5×10 rooms. A single exterior door sits on the south wall of
+  the left room; no door connects R1 ↔ R2. Validates the
+  "two rooms exist but are not internally connected" topology.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_two_room_floor
+expected:
+  elements:
+    wall: { count: 5 }   # 4 perimeter + 1 interior partition
+    door: { count: 1 }
+    room:
+      count: 2
+      areas: [50.0, 50.0]
+      area_tolerance: 0.01
+  connectivity:
+    hosted_doors: 1
+    derived_rooms: 2
+    adjacencies: 0   # door is exterior; no room-to-room edge

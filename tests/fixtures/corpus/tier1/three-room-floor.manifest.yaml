@@ -1,0 +1,26 @@
+name: three-room-floor
+description: |
+  Canonical T-junction case for connectivity: 10×10 footprint with
+  a horizontal partition at y=5 (continuous wall, gets split at the
+  T-junction at (5, 5)) and a vertical partition (5, 5)→(5, 10) in
+  the upper half. Two interior doors at (2.5, 5) and (7.5, 5) connect
+  the small upper rooms to the large lower room.
+
+  Adjacency expected: R1↔R3 and R2↔R3 (both via the y=5 partition).
+  R1 and R2 share a wall but no door — explicitly NOT connected.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_three_room_floor
+expected:
+  elements:
+    wall: { count: 6 }   # 4 perimeter + 2 interior partitions
+    door: { count: 2 }
+    room:
+      count: 3
+      # Sorted descending — large lower room (50), then two upper (25, 25).
+      areas: [50.0, 25.0, 25.0]
+      area_tolerance: 0.01
+  connectivity:
+    hosted_doors: 2
+    derived_rooms: 3
+    adjacencies: 2

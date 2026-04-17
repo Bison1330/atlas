@@ -1,0 +1,26 @@
+name: one-room-floor
+description: |
+  Minimal multi-element baseline: a single 10×8 room enclosed by
+  4 perimeter walls with one exterior door at the (0, 0) corner.
+  Used to verify that the everything-works-on-the-easy-case path
+  produces no surprises before harder fixtures are exercised.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_one_room_floor
+expected:
+  elements:
+    wall: { count: 4 }
+    door: { count: 1 }
+    # 1 derived room (4-wall perimeter) — the explicit-A-ROOM polygon
+    # used by other fixtures isn't drawn here.
+    room:
+      count: 1
+      areas: [80.0]
+      area_tolerance: 0.01
+  connectivity:
+    # Door sits at the corner of the perimeter — its hinge is on a wall,
+    # so it's hosted, but it touches only one room (the interior face),
+    # so no adjacency edge.
+    hosted_doors: 1
+    derived_rooms: 1
+    adjacencies: 0

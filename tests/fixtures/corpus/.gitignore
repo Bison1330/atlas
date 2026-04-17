@@ -8,3 +8,10 @@ tier3/**
 !tier3/.gitkeep
 !tier2/README.md
 !tier3/README.md
+
+# Allow per-file provenance / source notes — small Markdown files
+# carrying retrieval URL, license, status. Their referenced binaries
+# stay ignored; the notes themselves are what make the corpus
+# reproducible.
+!tier2/*.SOURCE.md
+!tier3/*.SOURCE.md
