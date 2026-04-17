@@ -108,6 +108,12 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # Build-time arg is what actually gets baked into the client
+      # bundle (Next.js inlines NEXT_PUBLIC_* at build). The runtime
+      # `environment:` block keeps it set on the running container too
+      # for any server-side code that wants the same value.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     restart: unless-stopped
     environment:
       NODE_ENV: production
