@@ -42,6 +42,16 @@ months later.
 | 03 | [OSS tooling survey](./03-tooling-survey.md)                 | stub |
 | 04 | [Confidence + provenance](./04-confidence-and-provenance.md) | stub |
 
+Milestone-specific research (not numbered — each milestone gets its
+own prefix so they don't collide with the core M2 sequence):
+
+| Topic | Status |
+|-------|--------|
+| [extractor-gaps.md](./extractor-gaps.md) — known M2/M3/M4 limits | living doc |
+| [m4-phase3-ifc-probe.md](./m4-phase3-ifc-probe.md) — IFC static probe | answered |
+| [m4-phase3-procurement.md](./m4-phase3-procurement.md) — real-drawing corpus punch list | answered |
+| [m5-design-intent-qa.md](./m5-design-intent-qa.md) — Q&A scope, citation contract, eval plan | in progress |
+
 Add more as questions surface. Don't pre-create stubs we don't intend
 to fill — empty research notes rot.
 
