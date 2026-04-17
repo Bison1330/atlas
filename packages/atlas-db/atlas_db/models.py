@@ -383,3 +383,65 @@ class Element(TimestampMixin, Base):
     host: Mapped[Element | None] = relationship(
         remote_side="Element.id", foreign_keys=[host_element_id]
     )
+
+
+class Annotation(TimestampMixin, Base):
+    """User-authored note attached to a single extracted element (M6).
+
+    Intentionally narrow in v1:
+
+    - One note per target element (no threading; add a ``parent_id``
+      self-FK when that ships).
+    - No ``author_id`` — Atlas has no auth yet, so ``author_name`` is a
+      free-form string the client supplies. An M7 auth migration will
+      add the FK and either demote or drop this column.
+    - No ``source_id``. Annotations attach to ``element_id`` directly;
+      re-extraction creates a new source with new element IDs, and
+      old annotations stay pointing at the old run's elements. See
+      D-10 in ``docs/research/m6-annotations.md``.
+
+    FK policy:
+
+    - ``drawing_id`` cascades (deleting a drawing removes every
+      annotation scoped to it).
+    - ``element_id`` restricts — deleting an element under an
+      annotation is a schema invariant violation surfaced loudly
+      rather than silent data loss. Under the immutable-source
+      model this should never happen in practice.
+    """
+
+    __tablename__ = "annotations"
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(author_name) BETWEEN 1 AND 120",
+            name="ck_annotations_author_name_len",
+        ),
+        CheckConstraint(
+            "char_length(body) BETWEEN 1 AND 4000",
+            name="ck_annotations_body_len",
+        ),
+        Index(
+            "ix_annotations_drawing_created",
+            "drawing_id", "created_at",
+        ),
+        Index("ix_annotations_element_id", "element_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    drawing_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("drawings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    element_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("elements.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    author_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(String(4000), nullable=False)
+
+    drawing: Mapped[Drawing] = relationship()
+    element: Mapped[Element] = relationship()

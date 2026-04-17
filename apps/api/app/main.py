@@ -16,6 +16,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.s3 import ensure_bucket
 from app.middleware.request_id import RequestIDMiddleware
 from app.routes import (
+    annotations,
     connectivity,
     drawings,
     elements,
@@ -91,6 +92,9 @@ def create_app() -> FastAPI:
     app.include_router(takeoffs.router)
     app.include_router(connectivity.router)
     app.include_router(qa.router)
+    app.include_router(annotations.drawing_router)
+    app.include_router(annotations.element_router)
+    app.include_router(annotations.annotation_router)
     app.include_router(websocket.router)
 
     log = get_logger("atlas.api")

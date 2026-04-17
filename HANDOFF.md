@@ -26,9 +26,9 @@ An AEC platform for architectural drawing analysis. Tagline: **"Architecture tha
 | M2  | Structured drawings  | **live** | Rooms, walls, doors via NCS + ezdxf   |
 | M3  | Enhanced analysis    | **live** | Takeoffs + room connectivity + eval framework (Tier 1 synthetic fixtures PASS; gap catalog for real-CAD limits in `docs/research/extractor-gaps.md`). Code checks + cost deferred — not in the shipped slice. |
 | M4  | Real-CAD capability  | in progress | Branch `m4/real-cad-capability`. **Phase 1 shipped (`b70367d`):** G-R3 (INSERT blocks), G-C1 (window classification), G-R1 (SPLINE walls). **Phase 2 shipped (`6a55511`):** G-O1 (explicit-vs-derived room dedup) and G-R5 (multi-segment polyline hosting). **Phase 3 blocked on procurement** — no real DXF / RVT / permit PDF samples on disk; IFC probe completed (see `docs/research/m4-phase3-ifc-probe.md`), punch list of required files in `docs/research/m4-phase3-procurement.md`. Remaining code gaps in `docs/research/extractor-gaps.md` are post-MVP. |
-| M5  | Design-intent Q&A    | planned  | Grounded answers with citations       |
-| M6  | Review workspace     | planned  | Annotations, exports                  |
-| M7  | Team collaboration   | planned  | Projects, roles                       |
+| M5  | Design-intent Q&A    | in progress | Branch `m5/design-intent-qa` (`fe71bf8`). API shipped: `POST /drawings/{id}/ask` returns grounded answer + citations for 5 buckets (count/quantity/rank/adjacency/lookup) via Claude interpreter + deterministic formatters. Eval harness + 15 Q/A pairs. **M5b (UI) deferred** — will consolidate with M6b viewer overlay. See `docs/research/m5-design-intent-qa.md`. |
+| M6  | Review workspace     | in progress | Branch `m6/annotations`. **Thin slice: element annotations** — `POST/GET/PATCH/DELETE` on `/drawings/{id}/annotations`; FK cascade on drawing delete, `element_id` FK RESTRICT; plain-text body, no auth, no threading. Each response echoes cited element's `extraction_status` + `confidence` so M4 Phase 3 caveat surfaces inline. **M6b (UI) deferred** with M5b. See `docs/research/m6-annotations.md`. |
+| M7  | Team collaboration   | planned  | Projects, roles, auth (unblocks public-facing M5/M6)  |
 
 Rule: **each milestone ships end-to-end before the next starts.**
 
