@@ -53,7 +53,8 @@ own prefix so they don't collide with the core M2 sequence):
 | [m5-design-intent-qa.md](./m5-design-intent-qa.md) — Q&A scope, citation contract, eval plan | answered |
 | [m6-annotations.md](./m6-annotations.md) — thin review slice: element annotations, no auth | answered |
 | [m7-basic-auth.md](./m7-basic-auth.md) — basic email/password auth + drawing ownership | answered |
-| [m8-projects.md](./m8-projects.md) — thin collaboration slice: projects + flat membership | in progress |
+| [m8-projects.md](./m8-projects.md) — thin collaboration slice: projects + flat membership | answered |
+| [atlas-web-m7-auth-ui.md](./atlas-web-m7-auth-ui.md) — frontend auth UI (login/register/me + CSRF flow) | in progress |
 
 Add more as questions surface. Don't pre-create stubs we don't intend
 to fill — empty research notes rot.
