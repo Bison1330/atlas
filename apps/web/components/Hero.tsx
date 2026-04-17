@@ -57,7 +57,7 @@ export function Hero() {
         <dl className="mt-8 grid max-w-[720px] grid-cols-3 gap-2 border-t border-border-subtle pt-4">
           <Stat label="Disciplines" value="14" hint="CSI sheet set" />
           <Stat label="Element kinds" value="10" hint="rooms → symbols" />
-          <Stat label="Milestones shipped" value="3 / 7" hint="M0 · M1 · M2 live" />
+          <Stat label="Milestones shipped" value="4 / 7" hint="M0 · M1 · M2 · M3 live" />
         </dl>
       </div>
     </section>

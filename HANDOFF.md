@@ -2,7 +2,7 @@
 
 Working doc for resuming work on Atlas across chat sessions. If you're a new Claude chat picking this up — read this top-to-bottom before touching the code.
 
-Last updated: **2026-04-16** (end of M0).
+Last updated: **2026-04-17** (end of M3).
 
 ---
 
@@ -24,12 +24,24 @@ An AEC platform for architectural drawing analysis. Tagline: **"Architecture tha
 | M0  | Foundation           | **live** | Monorepo, stack, CI/CD, skeletons     |
 | M1  | Ingest pipeline      | **live** | PDF → sheets → tiles, frontend viewer |
 | M2  | Structured drawings  | **live** | Rooms, walls, doors via NCS + ezdxf   |
-| M3  | Enhanced analysis    | building | Takeoffs first; connectivity, code checks, cost (when pricing data lands) follow. *Replaces the original M3 "coordination checks: clashes, drift" — see commit history if that scope is wanted back as a future milestone.* |
+| M3  | Enhanced analysis    | **live** | Takeoffs + room connectivity + eval framework (Tier 1 synthetic fixtures PASS; gap catalog for real-CAD limits in `docs/research/extractor-gaps.md`). Code checks + cost deferred — not in the shipped slice. |
 | M4  | Design-intent Q&A    | planned  | Grounded answers with citations       |
 | M5  | Review workspace     | planned  | Annotations, exports                  |
 | M6  | Team collaboration   | planned  | Projects, roles                       |
 
 Rule: **each milestone ships end-to-end before the next starts.**
+
+### Running the extractor eval (fresh clone)
+
+`scripts/eval_extraction.py` runs the M2 reader + M3 connectivity in-process against YAML ground-truth manifests. Deps are the worker's + atlas-core's + pyyaml — install into a venv:
+
+```bash
+python3 -m venv .venv-eval
+.venv-eval/bin/pip install -e 'packages/atlas-core[dev]' -e 'apps/worker' pyyaml
+.venv-eval/bin/python scripts/eval_extraction.py
+```
+
+Exits 0 iff every non-skipped fixture passes. Tier 2/3 manifests with no physical file SKIP by design (those files are gitignored; see `tests/fixtures/corpus/MANIFEST.md` for how to populate them).
 
 ---
 

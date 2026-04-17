@@ -31,7 +31,7 @@ export function Nav() {
         <div className="flex items-center gap-2">
           <span className="hidden items-center gap-1 rounded border border-border-subtle bg-bg-surface px-2 py-0.5 font-mono text-xs text-text-secondary md:inline-flex">
             <span className="h-1 w-1 rounded-full bg-accent animate-pulse" />
-            M3 · active
+            M3 · live
           </span>
           <Link
             href="/upload"
