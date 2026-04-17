@@ -4,10 +4,56 @@
  * Types here intentionally mirror the Pydantic models in
  * `atlas_core.ingest` and `apps/api/app/schemas`. Keep them in sync —
  * they're the contract between the worker, the API, and the UI.
+ *
+ * M7 auth integration: every browser fetch goes through
+ * :func:`fetchApi`, which sets ``credentials: "include"`` so session
+ * + CSRF cookies travel on the same origin, and injects the
+ * ``X-Atlas-CSRF`` double-submit header on mutations. Server-side
+ * fetches (RSC) go through a separate helper in ``api-server.ts``
+ * that forwards the incoming request's Cookie header explicitly.
  */
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Same-origin path; Next.js `rewrites()` in next.config.mjs proxies
+// /api/* to INTERNAL_API_URL. Behind Caddy in prod, Caddy strips /api
+// before forwarding. Either way: the browser sees one origin, and
+// cookies Just Work.
+export const API_BASE = "/api";
+
+// HTTP methods that require the CSRF double-submit header (matches
+// the API's require_csrf dep — GET/HEAD/OPTIONS bypass).
+const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+/** Read a browser cookie by name. Client-only — server never has `document`. */
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.split("=")[1]) : null;
+}
+
+/**
+ * Centralized browser fetch wrapper. All client-side API calls should
+ * go through this — it handles credentials + CSRF + error coercion
+ * uniformly. Server components use `lib/api-server.ts` instead.
+ */
+export async function fetchApi(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers);
+  if (MUTATING_METHODS.has(method)) {
+    const csrf = readCookie("atlas_csrf");
+    if (csrf) headers.set("X-Atlas-CSRF", csrf);
+  }
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    method,
+    headers,
+    credentials: "include",
+  });
+}
 
 export type IngestStatus =
   | "queued"
@@ -124,22 +170,19 @@ async function parseError(res: Response): Promise<ApiClientError> {
   }
 }
 
-export async function uploadDrawing(
-  file: File,
-  opts: { projectName?: string; signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {},
-): Promise<DrawingSummary> {
-  // We use XMLHttpRequest (not fetch) because progress events on
-  // request bodies aren't yet portable across all browsers via the
-  // streams API. XHR's upload.onprogress is universal and gives us
-  // the bytes-transferred number we need for the upload UI.
+/** XHR upload with session + CSRF, mirroring fetchApi behaviour. */
+function sendUploadXhr<T>(
+  url: string,
+  form: FormData,
+  opts: { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {},
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const form = new FormData();
-    form.append("file", file);
-    if (opts.projectName) form.append("project_name", opts.projectName);
-
-    xhr.open("POST", `${API_BASE}/drawings/upload`);
+    xhr.open("POST", url);
     xhr.responseType = "json";
+    xhr.withCredentials = true;
+    const csrf = readCookie("atlas_csrf");
+    if (csrf) xhr.setRequestHeader("X-Atlas-CSRF", csrf);
     if (opts.onProgress) {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) opts.onProgress!(e.loaded, e.total);
@@ -147,7 +190,7 @@ export async function uploadDrawing(
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response as DrawingSummary);
+        resolve(xhr.response as T);
       } else {
         reject(new ApiClientError(xhr.status, xhr.response ?? xhr.statusText));
       }
@@ -161,14 +204,32 @@ export async function uploadDrawing(
   });
 }
 
+
+export async function uploadDrawing(
+  file: File,
+  opts: { projectName?: string; signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {},
+): Promise<DrawingSummary> {
+  // XHR (not fetch) because request-body progress events aren't yet
+  // portable across browsers via the streams API. XHR's upload.onprogress
+  // gives us the bytes-transferred number for the upload UI.
+  const form = new FormData();
+  form.append("file", file);
+  if (opts.projectName) form.append("project_name", opts.projectName);
+  return sendUploadXhr<DrawingSummary>(
+    `${API_BASE}/drawings/upload`,
+    form,
+    opts,
+  );
+}
+
 export async function getDrawingStatus(id: string, signal?: AbortSignal): Promise<DrawingStatus> {
-  const res = await fetch(`${API_BASE}/drawings/${id}/status`, { signal });
+  const res = await fetchApi(`/drawings/${id}/status`, { signal });
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
 
 export async function getDrawing(id: string, signal?: AbortSignal): Promise<DrawingSummary> {
-  const res = await fetch(`${API_BASE}/drawings/${id}`, { signal });
+  const res = await fetchApi(`/drawings/${id}`, { signal });
   if (!res.ok && res.status !== 202) throw await parseError(res);
   return res.json();
 }
@@ -243,38 +304,20 @@ export async function uploadDxf(
     onProgress?: (loaded: number, total: number) => void;
   } = {},
 ): Promise<ExtractionRunSummary> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const form = new FormData();
-    form.append("file", file);
-    xhr.open("POST", `${API_BASE}/drawings/${drawingId}/extract`);
-    xhr.responseType = "json";
-    if (opts.onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) opts.onProgress!(e.loaded, e.total);
-      };
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response as ExtractionRunSummary);
-      } else {
-        reject(new ApiClientError(xhr.status, xhr.response ?? xhr.statusText));
-      }
-    };
-    xhr.onerror = () => reject(new ApiClientError(0, "Network error"));
-    xhr.onabort = () => reject(new ApiClientError(0, "Upload cancelled"));
-    if (opts.signal) {
-      opts.signal.addEventListener("abort", () => xhr.abort(), { once: true });
-    }
-    xhr.send(form);
-  });
+  const form = new FormData();
+  form.append("file", file);
+  return sendUploadXhr<ExtractionRunSummary>(
+    `${API_BASE}/drawings/${drawingId}/extract`,
+    form,
+    opts,
+  );
 }
 
 export async function getExtractions(
   drawingId: string,
   signal?: AbortSignal,
 ): Promise<{ drawing_id: string; count: number; extractions: ExtractionRunSummary[] }> {
-  const res = await fetch(`${API_BASE}/drawings/${drawingId}/extractions`, { signal });
+  const res = await fetchApi(`/drawings/${drawingId}/extractions`, { signal });
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
@@ -303,8 +346,8 @@ export async function getElements(
   for (const i of opts.include ?? []) params.append("include", i);
   if (opts.limit != null) params.append("limit", String(opts.limit));
   const q = params.toString();
-  const url = `${API_BASE}/drawings/${drawingId}/elements${q ? `?${q}` : ""}`;
-  const res = await fetch(url, { signal: opts.signal });
+  const url = `/drawings/${drawingId}/elements${q ? `?${q}` : ""}`;
+  const res = await fetchApi(url, { signal: opts.signal });
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
@@ -350,8 +393,64 @@ export async function getTakeoffs(
   const params = new URLSearchParams();
   if (opts.source_id) params.append("source_id", opts.source_id);
   const q = params.toString();
-  const url = `${API_BASE}/drawings/${drawingId}/takeoffs${q ? `?${q}` : ""}`;
-  const res = await fetch(url, { signal: opts.signal });
+  const url = `/drawings/${drawingId}/takeoffs${q ? `?${q}` : ""}`;
+  const res = await fetchApi(url, { signal: opts.signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+// ---------- M7: auth ----------
+
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  email_verified: boolean;
+  display_name: string | null;
+  is_active: boolean;
+  last_login_at: string | null;
+}
+
+
+export async function authRegister(
+  body: { email: string; password: string; display_name?: string },
+  signal?: AbortSignal,
+): Promise<AuthUser> {
+  const res = await fetchApi("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function authLogin(
+  body: { email: string; password: string },
+  signal?: AbortSignal,
+): Promise<AuthUser> {
+  const res = await fetchApi("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function authLogout(signal?: AbortSignal): Promise<void> {
+  const res = await fetchApi("/auth/logout", { method: "POST", signal });
+  if (!res.ok) throw await parseError(res);
+}
+
+
+export async function authMe(signal?: AbortSignal): Promise<AuthUser> {
+  const res = await fetchApi("/auth/me", { signal });
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
