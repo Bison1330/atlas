@@ -118,6 +118,10 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # Used by Next.js rewrites() to proxy /api/* server-side, so
+      # browser calls never need cross-origin cookies. Talks to the
+      # api service via the compose network.
+      INTERNAL_API_URL: http://api:8000
     depends_on:
       - api
     ports:
