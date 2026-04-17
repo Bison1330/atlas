@@ -72,6 +72,7 @@ def extract_from_dxf(
     drawing_id: UUID,
     dxf_path: Path,
     *,
+    source_id: UUID | None = None,
     sheet_id: UUID | None = None,
     producer_version: str = PRODUCER_VERSION,
 ) -> ExtractionRunSummary:
@@ -81,6 +82,17 @@ def extract_from_dxf(
     boundaries so a partial run leaves a coherent ``ElementSource``
     in the DB even if the host process crashes.
 
+    ``source_id`` selects between two modes:
+
+    - **None (standalone path).** The orchestrator inserts a fresh
+      ``ElementSource`` row in ``running`` state and runs to
+      completion. Used by direct callers and the existing test
+      fixtures.
+    - **Provided (RQ path).** The API has already created the source
+      in ``queued`` state and enqueued this job. The orchestrator
+      transitions it to ``running`` and proceeds. The source row's
+      ``params`` typically already records the DXF's S3 key + size.
+
     ``sheet_id`` selects which sheet to attach elements to. If None,
     the drawing's first (lowest ``page_number``) sheet is used —
     this matches the common case where a DXF represents one sheet.
@@ -88,18 +100,32 @@ def extract_from_dxf(
     started = time.monotonic()
     sheet_uuid = _resolve_sheet_id(session, drawing_id, sheet_id)
 
-    source = ElementSource(
-        drawing_id=drawing_id,
-        source_kind="extraction",
-        producer_name=PRODUCER_NAME,
-        producer_version=producer_version,
-        status="running",
-        started_at=datetime.now(UTC),
-        params={"dxf_path": str(dxf_path)},
-    )
-    session.add(source)
-    session.commit()
-    session.refresh(source)
+    if source_id is None:
+        source = ElementSource(
+            drawing_id=drawing_id,
+            source_kind="extraction",
+            producer_name=PRODUCER_NAME,
+            producer_version=producer_version,
+            status="running",
+            started_at=datetime.now(UTC),
+            params={"dxf_path": str(dxf_path)},
+        )
+        session.add(source)
+        session.commit()
+        session.refresh(source)
+    else:
+        source = session.get(ElementSource, source_id)
+        if source is None:
+            raise ValueError(f"ElementSource {source_id} not found")
+        if source.drawing_id != drawing_id:
+            raise ValueError(
+                f"ElementSource {source_id} belongs to a different drawing"
+            )
+        source.status = "running"
+        source.started_at = datetime.now(UTC)
+        session.add(source)
+        session.commit()
+        session.refresh(source)
 
     events.publish(
         drawing_id,
@@ -257,3 +283,118 @@ def candidates_to_elements(
 ) -> list[Element]:
     """Helper: bulk convert candidates → Element rows. Used by tests."""
     return [_candidate_to_element(c, sheet_id, source_id) for c in candidates]
+
+
+# ---------- RQ entrypoint ----------
+
+
+def run_dxf_extraction(source_id_str: str) -> None:
+    """RQ entrypoint: download the queued DXF from S3 and run the orchestrator.
+
+    The API is responsible for:
+
+    1. Uploading the DXF to S3 under
+       ``drawings/{drawing_id}/extractions/{source_id}/source.dxf``.
+    2. Inserting an ``ElementSource`` row in ``queued`` state with
+       ``params = {"dxf_s3_key": "...", "dxf_size_bytes": ...}``.
+    3. Enqueuing this job with the source_id as a string (RQ
+       serializes args via pickle but UUID-typed args have hit
+       compatibility quirks across versions; strings are safer).
+
+    On any error before extraction begins (S3 download fails, source
+    row missing) we mark the source ``failed`` and emit
+    ``extraction.failed`` so listeners aren't left hanging. Errors
+    *during* extraction are handled by ``extract_from_dxf``.
+    """
+    # Local imports avoid a cycle when extract.py is imported at
+    # worker module load (s3.py already pulls config which pulls env).
+    import tempfile
+
+    from worker import s3 as s3_mod
+    from worker.config import get_settings
+    from worker.db import session_scope
+
+    source_id = UUID(source_id_str)
+    log.info("extract.rq.start", source_id=source_id_str)
+
+    with session_scope() as session:
+        source = session.get(ElementSource, source_id)
+        if source is None:
+            raise RuntimeError(f"ElementSource {source_id} not found")
+
+        drawing_id = source.drawing_id
+        params = dict(source.params or {})
+        dxf_s3_key = params.get("dxf_s3_key")
+        if not dxf_s3_key:
+            _fail_source(
+                session,
+                source,
+                drawing_id,
+                code="missing_s3_key",
+                message="ElementSource.params.dxf_s3_key is missing",
+            )
+            raise RuntimeError(f"ElementSource {source_id} has no dxf_s3_key")
+
+        with tempfile.TemporaryDirectory(prefix="atlas-extract-") as workdir:
+            local_path = Path(workdir) / "source.dxf"
+            try:
+                s3_mod.get_s3_client().download_file(
+                    get_settings().s3_bucket,
+                    dxf_s3_key,
+                    str(local_path),
+                )
+            except Exception as exc:
+                _fail_source(
+                    session,
+                    source,
+                    drawing_id,
+                    code="s3_download_failed",
+                    message=str(exc),
+                )
+                raise
+
+            # Hand off to the existing orchestrator which transitions
+            # queued → running and handles its own failure mode.
+            extract_from_dxf(
+                session,
+                drawing_id,
+                local_path,
+                source_id=source_id,
+            )
+
+
+def _fail_source(
+    session: Session,
+    source: ElementSource,
+    drawing_id: UUID,
+    *,
+    code: str,
+    message: str,
+) -> None:
+    """Mark a source failed before the orchestrator runs (e.g. S3 missing).
+
+    Mirrors the orchestrator's failure path so the API/WS see the
+    same event shape regardless of where in the pipeline it died.
+    """
+    source.status = "failed"
+    source.error_code = code
+    source.error_message = message[:2048]
+    source.finished_at = datetime.now(UTC)
+    session.add(source)
+    session.commit()
+    events.publish(
+        drawing_id,
+        {
+            "type": "extraction.failed",
+            "drawing_id": str(drawing_id),
+            "source_id": str(source.id),
+            "error_code": code,
+            "error_message": source.error_message,
+        },
+    )
+    log.error(
+        "extract.rq.failed_pre_orchestrator",
+        source_id=str(source.id),
+        code=code,
+        message=message,
+    )

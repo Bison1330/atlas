@@ -68,3 +68,9 @@ def sheet_preview_key(drawing_id: str, sheet_id: str) -> str:
 def tile_key(drawing_id: str, sheet_id: str, zoom: int, col: int, row: int) -> str:
     prefix = get_settings().s3_drawings_prefix.strip("/")
     return f"{prefix}/{drawing_id}/sheets/{sheet_id}/tiles/{zoom}/{col}/{row}.webp"
+
+
+def extraction_source_key(drawing_id: str, source_id: str, *, ext: str = "dxf") -> str:
+    """Where the uploaded source file (DXF, later IFC) lives in S3."""
+    prefix = get_settings().s3_drawings_prefix.strip("/")
+    return f"{prefix}/{drawing_id}/extractions/{source_id}/source.{ext}"
