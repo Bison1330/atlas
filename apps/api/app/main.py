@@ -15,7 +15,15 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.s3 import ensure_bucket
 from app.middleware.request_id import RequestIDMiddleware
-from app.routes import drawings, elements, extractions, health, sheets, websocket
+from app.routes import (
+    drawings,
+    elements,
+    extractions,
+    health,
+    sheets,
+    takeoffs,
+    websocket,
+)
 
 
 def _init_sentry(settings: Settings) -> None:
@@ -78,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(sheets.router)
     app.include_router(elements.router)
     app.include_router(extractions.router)
+    app.include_router(takeoffs.router)
     app.include_router(websocket.router)
 
     log = get_logger("atlas.api")

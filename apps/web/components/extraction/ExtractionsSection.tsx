@@ -12,6 +12,7 @@ import { ElementInspector } from "./ElementInspector";
 import { ElementList } from "./ElementList";
 import { ElementPreview } from "./ElementPreview";
 import { ExtractionProgress } from "./ExtractionProgress";
+import { TakeoffPanel } from "./TakeoffPanel";
 
 interface Props {
   drawingId: string;
@@ -209,6 +210,7 @@ function renderBody(
               onSelect={setSelectedId}
             />
           </div>
+          <TakeoffPanel drawingId={drawingId} sourceId={mode.run.id} />
         </div>
         <div className="h-[620px]">
           <ElementInspector element={selected} />

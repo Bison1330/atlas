@@ -308,3 +308,50 @@ export async function getElements(
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
+
+// ---------- M3: takeoffs ----------
+
+export interface TakeoffSubcategory {
+  label: string;
+  count: number;
+  linear_units: number | null;
+  area_units: number | null;
+}
+
+export interface TakeoffCategory {
+  kind: string;
+  label: string;
+  count: number;
+  total_linear_units: number | null;
+  total_area_units: number | null;
+  subcategories: TakeoffSubcategory[];
+}
+
+export interface TakeoffUnits {
+  linear: string;
+  area: string;
+  note: string;
+}
+
+export interface TakeoffReport {
+  drawing_id: string;
+  source_id: string | null;
+  generated_at: string;
+  total_elements: number;
+  kinds_present: string[];
+  categories: TakeoffCategory[];
+  units: TakeoffUnits;
+}
+
+export async function getTakeoffs(
+  drawingId: string,
+  opts: { source_id?: string; signal?: AbortSignal } = {},
+): Promise<TakeoffReport> {
+  const params = new URLSearchParams();
+  if (opts.source_id) params.append("source_id", opts.source_id);
+  const q = params.toString();
+  const url = `${API_BASE}/drawings/${drawingId}/takeoffs${q ? `?${q}` : ""}`;
+  const res = await fetch(url, { signal: opts.signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}

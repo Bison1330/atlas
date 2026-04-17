@@ -22,9 +22,9 @@ An AEC platform for architectural drawing analysis. Tagline: **"Architecture tha
 | ID  | Title                | Status   | Notes                                 |
 |-----|----------------------|----------|---------------------------------------|
 | M0  | Foundation           | **live** | Monorepo, stack, CI/CD, skeletons     |
-| M1  | Ingest pipeline      | planned  | PDF → sheets → tiles                  |
-| M2  | Structured drawings  | planned  | Rooms, walls, doors from geometry     |
-| M3  | Coordination checks  | planned  | Clashes, drift                         |
+| M1  | Ingest pipeline      | **live** | PDF → sheets → tiles, frontend viewer |
+| M2  | Structured drawings  | **live** | Rooms, walls, doors via NCS + ezdxf   |
+| M3  | Enhanced analysis    | building | Takeoffs first; connectivity, code checks, cost (when pricing data lands) follow. *Replaces the original M3 "coordination checks: clashes, drift" — see commit history if that scope is wanted back as a future milestone.* |
 | M4  | Design-intent Q&A    | planned  | Grounded answers with citations       |
 | M5  | Review workspace     | planned  | Annotations, exports                  |
 | M6  | Team collaboration   | planned  | Projects, roles                       |
