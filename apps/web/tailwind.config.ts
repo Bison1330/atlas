@@ -23,8 +23,8 @@ const config: Config = {
           muted: "#7A8494",
         },
         accent: {
-          DEFAULT: "#3DDC84",
-          dim: "#2CA863",
+          DEFAULT: "#3B82F6",
+          dim: "#2563EB",
         },
       },
       fontFamily: {
@@ -67,11 +67,11 @@ const config: Config = {
       boxShadow: {
         subtle: "0 1px 2px rgba(0,0,0,0.3)",
         elevated: "0 8px 32px rgba(0,0,0,0.35)",
-        glow: "0 0 40px rgba(61, 220, 132, 0.18)",
+        glow: "0 0 40px rgba(59, 130, 246, 0.18)",
       },
       backgroundImage: {
         "grid-fade":
-          "radial-gradient(circle at 50% 0%, rgba(61,220,132,0.08), transparent 60%)",
+          "radial-gradient(circle at 50% 0%, rgba(59,130,246,0.08), transparent 60%)",
       },
     },
   },

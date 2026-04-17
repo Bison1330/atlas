@@ -14,7 +14,7 @@ border.sub   #242A32
 text.primary #F2F4F7
 text.secondary #B4BCC8
 text.muted   #7A8494
-accent       #3DDC84
+accent       #3B82F6
 ```
 
 Fonts: Inter (sans) + JetBrains Mono (mono) via `next/font/google`.

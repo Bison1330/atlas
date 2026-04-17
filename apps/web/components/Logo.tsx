@@ -11,11 +11,11 @@ export function Logo({ className = "" }: { className?: string }) {
       >
         <path
           d="M3 20L12 4L21 20H18L12 9.5L6 20H3Z"
-          stroke="#3DDC84"
+          stroke="#3B82F6"
           strokeWidth="1.6"
           strokeLinejoin="round"
         />
-        <path d="M8.25 15.5H15.75" stroke="#3DDC84" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M8.25 15.5H15.75" stroke="#3B82F6" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
       <span className="font-mono text-sm tracking-[0.2em] text-text-primary uppercase">
         Atlas

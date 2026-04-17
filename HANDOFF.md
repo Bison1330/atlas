@@ -80,7 +80,7 @@ atlas/
   - `bg.base` `#0B0D10`, `bg.surface` `#12151A`, `bg.elevated` `#1A1E24`
   - `border.subtle` `#242A32`
   - `text.primary` `#F2F4F7`, `text.secondary` `#B4BCC8`, `text.muted` `#7A8494`
-  - `accent` `#3DDC84` (with `accent.dim` `#2CA863`)
+  - `accent` `#3B82F6` (with `accent.dim` `#2563EB`) — switched from green to blue mid-M2
 - Fonts: Inter (sans) + JetBrains Mono (mono) via `next/font/google`
 - 8px spacing grid (spacing.1 = 8px, spacing.2 = 16px, …)
 - Landing page is 5 sections: `Nav → Hero → Capabilities → Approach → Status → Footer`
