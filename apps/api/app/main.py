@@ -17,6 +17,7 @@ from app.core.s3 import ensure_bucket
 from app.middleware.request_id import RequestIDMiddleware
 from app.routes import (
     annotations,
+    auth,
     connectivity,
     drawings,
     elements,
@@ -85,6 +86,8 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(health.router)
+    app.include_router(auth.auth_router)
+    app.include_router(auth.drawing_claim_router)
     app.include_router(drawings.router)
     app.include_router(sheets.router)
     app.include_router(elements.router)

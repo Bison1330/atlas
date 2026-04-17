@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -39,8 +40,60 @@ from atlas_db.base import Base, TimestampMixin
 _INGEST_STATUSES = ("queued", "validating", "rasterizing", "tiling", "completed", "failed")
 
 
+class User(TimestampMixin, Base):
+    """A local account authenticated by email + argon2id password hash (M7).
+
+    Intentionally narrow in M7:
+
+    - No role system — every user is an owner of their own drawings.
+      M8 layers projects + per-project membership; M8.1 layers roles.
+    - ``email_verified`` is stored but the verification flow lives
+      in M7.1 (email-delivery infrastructure is its own project).
+    - ``display_name`` is optional; login is by email only.
+    - ``password_hash`` is the full argon2id output string (includes
+      variant / params / salt / digest) so we can detect stale
+      params on login and rehash transparently.
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(email) BETWEEN 3 AND 255",
+            name="ck_users_email_len",
+        ),
+        CheckConstraint(
+            "char_length(password_hash) BETWEEN 10 AND 512",
+            name="ck_users_password_hash_len",
+        ),
+        UniqueConstraint("email", name="uq_users_email"),
+        Index("ix_users_email", "email"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+
+
 class Drawing(TimestampMixin, Base):
-    """One uploaded PDF and its top-level pipeline state."""
+    """One uploaded PDF and its top-level pipeline state.
+
+    ``owner_id`` is nullable by design (D-13): drawings uploaded
+    before M7 have NULL owner and are "unclaimed". New uploads
+    after M7 set owner_id from the authenticated user. An unclaimed
+    drawing can be taken via ``POST /drawings/{id}/claim``.
+    """
 
     __tablename__ = "drawings"
     __table_args__ = (
@@ -56,9 +109,16 @@ class Drawing(TimestampMixin, Base):
         Index("ix_drawings_created_at_desc", "created_at", postgresql_using="btree"),
         Index("ix_drawings_content_hash", "content_hash"),
         Index("ix_drawings_project_name", "project_name"),
+        Index("ix_drawings_owner_id", "owner_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    owner_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
 
     project_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_filename: Mapped[str] = mapped_column(String(512), nullable=False)

@@ -24,7 +24,13 @@ from fastapi import APIRouter, Depends, File, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.core.auth_dep import (
+    owned_drawing_for_read,
+    owned_drawing_for_write,
+    require_csrf,
+)
 from app.core.db import get_db
+from app.db import Drawing
 from app.services.extractions import create_extraction_from_upload, list_extractions
 
 router = APIRouter(prefix="/drawings", tags=["extractions"])
@@ -71,6 +77,8 @@ class ExtractionListResponse(BaseModel):
 async def trigger_extraction(
     drawing_id: UUID,
     file: Annotated[UploadFile, File(description="DXF file to extract from.")],
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_write)],
+    _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> ExtractionRunSummary:
     source = await create_extraction_from_upload(db, drawing_id, file)
@@ -84,6 +92,7 @@ async def trigger_extraction(
 )
 def get_extractions(
     drawing_id: UUID,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> ExtractionListResponse:
     rows = list_extractions(db, drawing_id)

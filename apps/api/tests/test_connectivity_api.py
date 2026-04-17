@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.db import Drawing, Element, ElementSource, Sheet
 from app.main import app
+from tests.conftest import TEST_USER_ID
 
 
 @pytest.fixture()
@@ -29,6 +30,7 @@ def _seed_two_room_plan(db) -> dict:
     d = Drawing(
         source_filename="x.dxf", source_s3_key="k", size_bytes=1,
         content_hash=f"sha256:conn-{uuid4().hex[:8]}",
+        owner_id=TEST_USER_ID,
     )
     db.add(d)
     db.flush()
@@ -126,6 +128,7 @@ class TestConnectivityApi:
         d = Drawing(
             source_filename="x.dxf", source_s3_key="k", size_bytes=1,
             content_hash="sha256:conn-empty",
+                    owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.commit()
@@ -135,9 +138,12 @@ class TestConnectivityApi:
         assert body["doors"] == []
         assert body["adjacencies"] == []
 
-    def test_unknown_drawing_returns_empty(self, client):
-        body = client.get(f"/drawings/{uuid4()}/connectivity").json()
-        assert body["source_id"] is None
+    def test_unknown_drawing_returns_404(self, client):
+        # M7: auth + ownership treat unknown drawings as 404 so callers
+        # can't enumerate drawing ids owned by other users.
+        r = client.get(f"/drawings/{uuid4()}/connectivity")
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "not_found"
 
     def test_explicit_source_id_filters_correctly(self, client, db):
         seeded = _seed_two_room_plan(db)
@@ -162,6 +168,7 @@ class TestConnectivityApi:
         d = Drawing(
             source_filename="x.dxf", source_s3_key="k", size_bytes=1,
             content_hash="sha256:conn-ext",
+                    owner_id=TEST_USER_ID,
         )
         db.add(d)
         db.flush()

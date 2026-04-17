@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.db import Drawing
 from app.main import app
+from tests.conftest import TEST_USER_ID
 
 
 @pytest.fixture()
@@ -30,6 +31,7 @@ def _insert(db, **overrides) -> Drawing:
         source_s3_key="drawings/xyz/source.pdf",
         size_bytes=1024,
         content_hash="sha256:abc",
+        owner_id=TEST_USER_ID,
     )
     defaults.update(overrides)
     d = Drawing(**defaults)

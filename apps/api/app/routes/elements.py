@@ -29,8 +29,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth_dep import owned_drawing_for_read
 from app.core.db import get_db
-from app.db import Element, Sheet
+from app.db import Drawing, Element, Sheet
 
 router = APIRouter(prefix="/drawings", tags=["elements"])
 
@@ -79,6 +80,7 @@ IncludeOption = Literal["geometry"]
 )
 def list_elements(
     drawing_id: UUID,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
     source_id: Annotated[
         UUID | None,
         Query(description="Filter to a single extraction run."),

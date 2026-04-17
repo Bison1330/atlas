@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import Drawing, Element, ElementSource, Sheet, Tile
+from tests.conftest import TEST_USER_ID
 
 
 def _make_drawing(**overrides) -> Drawing:
@@ -20,6 +21,7 @@ def _make_drawing(**overrides) -> Drawing:
         source_s3_key="drawings/xyz/source.pdf",
         size_bytes=1024,
         content_hash="sha256:deadbeef",
+        owner_id=TEST_USER_ID,
     )
     defaults.update(overrides)
     return Drawing(**defaults)

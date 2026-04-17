@@ -14,13 +14,16 @@ tile fetch — a forged path that doesn't exist in S3 simply 404s.
 
 from __future__ import annotations
 
+from typing import Annotated
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 
+from app.core.auth_dep import owned_drawing_for_read
 from app.core.config import get_settings
 from app.core.s3 import get_s3_client, sheet_preview_key, tile_key
+from app.db import Drawing
 
 router = APIRouter(prefix="/drawings", tags=["tiles"])
 log = structlog.get_logger("atlas.api.tiles")
@@ -60,7 +63,11 @@ def _stream_object(key: str, *, content_type: str, cache_control: str) -> Respon
     summary="WebP thumbnail for a sheet",
     responses={404: {"description": "Preview not generated yet."}},
 )
-def get_sheet_preview(drawing_id: UUID, sheet_id: UUID) -> Response:
+def get_sheet_preview(
+    drawing_id: UUID,
+    sheet_id: UUID,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
+) -> Response:
     return _stream_object(
         sheet_preview_key(str(drawing_id), str(sheet_id)),
         content_type="image/webp",
@@ -74,7 +81,12 @@ def get_sheet_preview(drawing_id: UUID, sheet_id: UUID) -> Response:
     responses={404: {"description": "Tile does not exist."}},
 )
 def get_tile(
-    drawing_id: UUID, sheet_id: UUID, zoom: int, col: int, row: int
+    drawing_id: UUID,
+    sheet_id: UUID,
+    zoom: int,
+    col: int,
+    row: int,
+    _owned: Annotated[Drawing, Depends(owned_drawing_for_read)],
 ) -> Response:
     if zoom < 0 or col < 0 or row < 0:
         raise HTTPException(status_code=400, detail="Negative coordinate")

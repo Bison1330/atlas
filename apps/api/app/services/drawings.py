@@ -55,6 +55,7 @@ async def create_drawing_from_upload(
     upload: UploadFile,
     *,
     project_name: str | None = None,
+    owner_id: UUID | None = None,
 ) -> Drawing:
     """Validate + store an uploaded PDF and create the Drawing row.
 
@@ -84,6 +85,7 @@ async def create_drawing_from_upload(
 
         drawing = Drawing(
             id=drawing_id,
+            owner_id=owner_id,
             project_name=project_name,
             source_filename=upload.filename,
             source_s3_key=s3_key,

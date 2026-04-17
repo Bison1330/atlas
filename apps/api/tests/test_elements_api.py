@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.db import Drawing, Element, ElementSource, Sheet
 from app.main import app
+from tests.conftest import TEST_USER_ID
 
 
 @pytest.fixture()
@@ -29,7 +30,8 @@ def _seed(db: Session, *, n_walls: int = 2, n_doors: int = 1) -> dict:
         source_s3_key="drawings/x/source.dxf",
         size_bytes=1,
         content_hash="sha256:elements-api",
-    )
+            owner_id=TEST_USER_ID,
+        )
     db.add(d)
     db.flush()
     s = Sheet(drawing_id=d.id, page_number=1)
@@ -88,13 +90,12 @@ class TestListElements:
         kinds = sorted(e["kind"] for e in body["elements"])
         assert kinds == ["door", "door", "wall", "wall", "wall"]
 
-    def test_unknown_drawing_returns_empty_not_404(self, client):
-        # The endpoint doesn't bother resolving drawing existence —
-        # an unknown id just returns zero elements. Cheaper, and
-        # callers already know the id from a prior /drawings call.
+    def test_unknown_drawing_returns_404(self, client):
+        # M7: ownership-resolution 404s unknown drawings so callers
+        # can't enumerate drawing ids owned by other users.
         r = client.get(f"/drawings/{uuid4()}/elements")
-        assert r.status_code == 200
-        assert r.json()["count"] == 0
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "not_found"
 
     def test_summary_default_omits_geometry_and_attrs(self, client, db: Session):
         seeded = _seed(db, n_walls=1, n_doors=0)
