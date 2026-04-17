@@ -37,7 +37,8 @@ RUN pip install \
       "boto3>=1.35,<2" \
       "pillow>=11.0,<12" \
       "pdf2image>=1.17,<2" \
-      "pypdf>=5.1,<6"
+      "pypdf>=5.1,<6" \
+      "ezdxf>=1.3,<2"
 
 COPY apps/worker /app
 
