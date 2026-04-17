@@ -34,7 +34,7 @@ from app.core.passwords import (
     needs_rehash,
     verify_password,
 )
-from app.db import Drawing, User
+from app.db import Drawing, ProjectMember, User
 from app.schemas.errors import APIError, NotFoundError
 
 
@@ -165,23 +165,47 @@ def authenticate(
 # ---------------------------------------------------------------------------
 
 
+def _is_project_member(
+    session: Session, project_id: UUID, user_id: UUID,
+) -> bool:
+    """Row-exists check against ``project_members``. Returns ``False``
+    for ``project_id=None`` so callers can pass a drawing's project_id
+    directly."""
+    if project_id is None:
+        return False
+    return session.execute(
+        select(ProjectMember).where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+    ).scalar_one_or_none() is not None
+
+
 def drawing_readable_by(
     session: Session, drawing_id: UUID, user: User,
 ) -> Drawing:
     """Resolve a drawing the user is allowed to *read*.
 
-    Read access: own + unclaimed. Raises ``NotFoundError`` for
-    missing drawings (don't 403 — we don't want to signal existence
-    of drawings that belong to other users).
+    Read access (M8 update):
+    - owner_id = user, OR
+    - unclaimed (owner_id IS NULL), OR
+    - drawing is assigned to a project the user is a member of.
+
+    NotFound (not 403) for drawings owned by others and not shared
+    via any project the user belongs to — we don't signal existence.
     """
     d = session.get(Drawing, drawing_id)
     if d is None:
         raise NotFoundError("Drawing", str(drawing_id))
-    if d.owner_id is not None and d.owner_id != user.id:
-        # Read access is restricted to owner + unclaimed; other
-        # users' drawings don't exist from this user's perspective.
-        raise NotFoundError("Drawing", str(drawing_id))
-    return d
+    if d.owner_id is None:
+        return d
+    if d.owner_id == user.id:
+        return d
+    if d.project_id is not None and _is_project_member(
+        session, d.project_id, user.id,
+    ):
+        return d
+    raise NotFoundError("Drawing", str(drawing_id))
 
 
 def drawing_writable_by(
@@ -189,8 +213,12 @@ def drawing_writable_by(
 ) -> Drawing:
     """Resolve a drawing the user is allowed to *mutate*.
 
-    Write access: owner only. Unclaimed drawings need to be claimed
-    first via ``POST /drawings/{id}/claim``.
+    Write access (M8 update):
+    - owner_id = user, OR
+    - drawing is assigned to a project the user is a member of.
+
+    Unclaimed drawings need to be claimed via
+    ``POST /drawings/{id}/claim`` before writes land.
     """
     d = session.get(Drawing, drawing_id)
     if d is None:
@@ -204,9 +232,13 @@ def drawing_writable_by(
             ),
             status_code=409,
         )
-    if d.owner_id != user.id:
-        raise NotFoundError("Drawing", str(drawing_id))
-    return d
+    if d.owner_id == user.id:
+        return d
+    if d.project_id is not None and _is_project_member(
+        session, d.project_id, user.id,
+    ):
+        return d
+    raise NotFoundError("Drawing", str(drawing_id))
 
 
 def claim_drawing(

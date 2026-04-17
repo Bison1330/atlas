@@ -6,6 +6,8 @@ from atlas_db.models import (
     Drawing,
     Element,
     ElementSource,
+    Project,
+    ProjectMember,
     Sheet,
     Tile,
     User,
@@ -17,10 +19,12 @@ __all__ = [
     "Drawing",
     "Element",
     "ElementSource",
+    "Project",
+    "ProjectMember",
     "Sheet",
     "Tile",
     "TimestampMixin",
     "User",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

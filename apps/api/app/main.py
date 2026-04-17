@@ -23,6 +23,7 @@ from app.routes import (
     elements,
     extractions,
     health,
+    projects,
     qa,
     sheets,
     takeoffs,
@@ -98,6 +99,8 @@ def create_app() -> FastAPI:
     app.include_router(annotations.drawing_router)
     app.include_router(annotations.element_router)
     app.include_router(annotations.annotation_router)
+    app.include_router(projects.project_router)
+    app.include_router(projects.drawing_assignment_router)
     app.include_router(websocket.router)
 
     log = get_logger("atlas.api")
