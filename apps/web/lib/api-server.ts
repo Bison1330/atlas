@@ -15,7 +15,7 @@
 
 import { cookies } from "next/headers";
 
-import type { AuthUser } from "./api";
+import type { AuthUser, DrawingListResponse } from "./api";
 
 const INTERNAL_API_URL =
   process.env.INTERNAL_API_URL ?? "http://api:8000";
@@ -46,6 +46,20 @@ export async function authMeOrNull(): Promise<AuthUser | null> {
   if (res.status === 401) return null;
   if (!res.ok) {
     throw new Error(`/auth/me returned ${res.status}`);
+  }
+  return res.json();
+}
+
+
+/** Server-side GET /drawings. Returns null on 401 (let the page redirect). */
+export async function listDrawingsServer(): Promise<DrawingListResponse | null> {
+  const res = await fetch(`${INTERNAL_API_URL}/drawings`, {
+    headers: await forwardedHeaders(),
+    cache: "no-store",
+  });
+  if (res.status === 401) return null;
+  if (!res.ok) {
+    throw new Error(`/drawings returned ${res.status}`);
   }
   return res.json();
 }

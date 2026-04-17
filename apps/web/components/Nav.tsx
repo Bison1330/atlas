@@ -40,7 +40,7 @@ export function Nav() {
             Sign in
           </Link>
           <Link
-            href="/upload"
+            href="/drawings"
             className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-medium text-bg-base transition-colors hover:bg-accent-dim"
           >
             Open app
