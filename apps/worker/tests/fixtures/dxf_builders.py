@@ -270,16 +270,100 @@ def build_polyline_window_floor(path: Path) -> Path:
     return path
 
 
+def build_l_shaped_wall_floor(path: Path) -> Path:
+    """L-shaped room where one wall is a multi-vertex LWPOLYLINE.
+
+    Layout::
+
+        (0,10)----(3,10)
+          |          |
+          |          |      <- single LWPOLYLINE wall from
+          |          |         (10,3) → (3,3) → (3,10) → (0,10)
+          |          (3,3)-----------(10,3)
+          |                             |
+          |                             |
+        (0,0)-----------------------(10,0)
+
+    Interior L-area = 10*10 - 7*7 = 51. Without G-R5, the polyline
+    wall collapses to a straight (10,3)→(0,10) diagonal and the face
+    walker derives a quadrilateral of area 65 — distinct from the
+    correct 51, so the eval diagnoses the fix. A door sits on the
+    south wall at (5, 0).
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    # Straight walls: south, east-lower, west
+    for a, b in [
+        ((0, 0), (10, 0)),   # south
+        ((10, 0), (10, 3)),  # east lower
+        ((0, 10), (0, 0)),   # west
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # The L-bend as a single LWPOLYLINE — the exact shape that G-R5
+    # exists to handle. 4 vertices → 3 segments post-expansion.
+    msp.add_lwpolyline(
+        [(10, 3), (3, 3), (3, 10), (0, 10)],
+        close=False,
+        dxfattribs={"layer": "A-WALL-EXTR"},
+    )
+
+    # Door on south wall
+    msp.add_arc(
+        center=(5, 0), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_explicit_and_derived_room_floor(path: Path) -> Path:
+    """10×8 floor with BOTH wall loop AND an explicit A-ROOM polygon.
+
+    Production CAD often ships both: the walls define the boundary
+    and an A-ROOM polygon carries the author's room name / number.
+    Before G-O1, the orchestrator would persist *two* room elements
+    for the same footprint — the explicit polygon and a derived
+    wall-loop room — and the takeoffs endpoint would double-count.
+
+    After G-O1, the explicit element is annotated with
+    ``attrs.derivation_confirmed = True`` and no duplicate derived
+    room is inserted.
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    for a, b in [
+        ((0, 0), (10, 0)),
+        ((10, 0), (10, 8)),
+        ((10, 8), (0, 8)),
+        ((0, 8), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # Explicit room polygon covering the same footprint as the wall loop
+    msp.add_lwpolyline(
+        [(0, 0), (10, 0), (10, 8), (0, 8)],
+        close=True,
+        dxfattribs={"layer": "A-ROOM"},
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
 def build_spline_wall_floor(path: Path) -> Path:
     """10×8 floor whose north wall is a SPLINE bowing upward.
 
     Three LINE walls (south, east, west) plus one SPLINE wall along
     the north, with endpoints at (10, 8) and (0, 8) and a control
-    point bulging outward at (5, 9). Since ``_wall_segment`` in the
-    orchestrator uses first/last point of the flattened polyline for
-    face-finding, the derived room sees a straight-chord rectangle
-    (area 80) — the spline's curvature is preserved in the element
-    geometry for future use. Exercises G-R1.
+    point bulging outward at (5, 9). Exercises G-R1; combined with
+    G-R5 (Phase 2), the flattened polyline's sub-segments now feed
+    the face walker so the derived room traces the bulge and
+    reports the correct ~86.22-unit bowed area rather than the
+    straight-chord 80.
     """
     doc = _new_doc()
     msp = doc.modelspace()

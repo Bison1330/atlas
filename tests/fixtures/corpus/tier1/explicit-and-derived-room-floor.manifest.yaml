@@ -1,0 +1,27 @@
+name: explicit-and-derived-room-floor
+description: |
+  10x8 floor that draws both a wall loop AND an explicit A-ROOM
+  polygon covering the same footprint. Exercises G-O1: the
+  orchestrator should annotate the explicit element as
+  derivation_confirmed and NOT insert a duplicate derived room.
+fixture:
+  kind: synthetic
+  builder: tests.fixtures.dxf_builders:build_explicit_and_derived_room_floor
+expected:
+  elements:
+    wall: { count: 4 }
+    room:
+      # After dedup: the explicit A-ROOM is the only room. No
+      # derived row is inserted because the wall-loop derivation
+      # matches the explicit polygon's bbox + area.
+      count: 0
+      areas: []
+      area_tolerance: 0.01
+  explicit_rooms:
+    count: 1
+    confirmed: 1
+  connectivity:
+    hosted_doors: 0
+    derived_rooms: 0
+    confirmed_explicit_rooms: 1
+    adjacencies: 0

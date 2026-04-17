@@ -343,10 +343,19 @@ def _run_connectivity_analysis(
     if not walls:
         return {"hosted_doors": 0, "derived_rooms": 0, "adjacencies": 0}
 
-    # Marshal ORM rows into the algorithm's bare-tuple shapes.
-    wall_segments: list[connectivity.Segment] = [
-        _wall_segment(w) for w in walls
-    ]
+    # Marshal ORM rows into the algorithm's bare-tuple shapes. Walls
+    # drawn as multi-vertex LWPOLYLINEs (L-shaped partitions, curved
+    # exterior after SPLINE flattening) contribute one segment per
+    # consecutive vertex pair; we keep a parallel parent list so
+    # hosting can attribute a matched segment back to its Element row.
+    # See G-R5 in docs/research/extractor-gaps.md.
+    wall_segments: list[connectivity.Segment] = []
+    segment_parent: list[Element] = []
+    for wall in walls:
+        for seg in _wall_segments(wall):
+            wall_segments.append(seg)
+            segment_parent.append(wall)
+
     door_centers: list[connectivity.Point] = [
         _door_center(d) for d in doors
     ]
@@ -357,14 +366,46 @@ def _run_connectivity_analysis(
     for h in hostings:
         if h.wall_index is None:
             continue
-        doors[h.door_index].host_element_id = walls[h.wall_index].id
+        doors[h.door_index].host_element_id = segment_parent[h.wall_index].id
         session.add(doors[h.door_index])
         hosted += 1
 
     # Derive rooms from the wall planar graph; persist each as a new
-    # Element row tagged derived=True.
+    # Element row tagged derived=True — unless an explicit A-ROOM
+    # polygon already covers the same footprint (G-O1), in which
+    # case we annotate the explicit element instead of inserting a
+    # duplicate.
     derived = connectivity.derive_rooms_from_walls(wall_segments)
-    for room in derived:
+    explicit_rooms = (
+        session.query(Element)
+        .filter(
+            Element.source_id == source_id,
+            Element.kind == "room",
+            # Explicit rows have no derivation flag; derived rows set
+            # attrs.derived=True. Filtering in Python is fine — a
+            # single sheet has few rooms.
+        )
+        .all()
+    )
+    explicit_rooms = [
+        r for r in explicit_rooms if not (r.attrs or {}).get("derived")
+    ]
+    explicit_polygons = [_explicit_polygon(r) for r in explicit_rooms]
+    matches = connectivity.dedup_derived_against_explicit(derived, explicit_polygons)
+
+    confirmed_explicit = 0
+    inserted_derived = 0
+    for i, room in enumerate(derived):
+        match_idx = matches[i]
+        if match_idx is not None:
+            existing = explicit_rooms[match_idx]
+            merged = dict(existing.attrs or {})
+            merged["derivation_confirmed"] = True
+            merged["derived_area"] = round(room.area, 6)
+            existing.attrs = merged
+            session.add(existing)
+            confirmed_explicit += 1
+            continue
         ring = [{"x": p[0], "y": p[1]} for p in room.ring]
         session.add(Element(
             sheet_id=sheet_id,
@@ -383,6 +424,7 @@ def _run_connectivity_analysis(
             },
             confidence=0.85,
         ))
+        inserted_derived += 1
     session.flush()
 
     # Count adjacency edges for the run summary; actual edges are
@@ -391,25 +433,58 @@ def _run_connectivity_analysis(
 
     return {
         "hosted_doors": hosted,
-        "derived_rooms": len(derived),
+        "derived_rooms": inserted_derived,
+        "confirmed_explicit_rooms": confirmed_explicit,
         "adjacencies": len(edges),
     }
 
 
-def _wall_segment(wall: Element) -> tuple[tuple[float, float], tuple[float, float]]:
-    """Pull the (start, end) tuple from a wall's polyline geometry.
+def _wall_segments(
+    wall: Element,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """Expand a wall's polyline geometry into consecutive-vertex segments.
 
-    Wall geometry is stored as a polyline; for hosting/face-finding we
-    treat each as a single segment between its first and last point.
-    Degenerate or wrong-shape geometry returns a zero-length segment
-    so caller indexing stays aligned.
+    A LINE wall has two points and yields one segment. A multi-vertex
+    LWPOLYLINE wall (L-shaped partition, flattened SPLINE) yields N-1
+    segments. Each caller pairs the returned segments with the same
+    parent Element so hosting can attribute the match back.
+
+    Degenerate geometry (missing points or only one vertex) returns
+    an empty list — the caller simply skips the wall.
     """
     geom = wall.geometry or {}
     pts = geom.get("points") or []
     if len(pts) < 2:
-        return ((0.0, 0.0), (0.0, 0.0))
-    a, b = pts[0], pts[-1]
-    return ((float(a["x"]), float(a["y"])), (float(b["x"]), float(b["y"])))
+        return []
+    segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        segments.append((
+            (float(a["x"]), float(a["y"])),
+            (float(b["x"]), float(b["y"])),
+        ))
+    return segments
+
+
+def _explicit_polygon(room: Element) -> tuple[
+    list[tuple[float, float]], tuple[float, float, float, float]
+]:
+    """Ring + bbox tuple for an explicit A-ROOM element.
+
+    Returns ``(ring, bbox)`` where ring is a list of (x, y) tuples
+    and bbox is (minx, miny, maxx, maxy). Matches the shape the
+    connectivity module uses for derived rooms.
+    """
+    geom = room.geometry or {}
+    ring_raw = geom.get("ring") or []
+    ring = [(float(p["x"]), float(p["y"])) for p in ring_raw]
+    if ring:
+        xs = [p[0] for p in ring]
+        ys = [p[1] for p in ring]
+        bbox = (min(xs), min(ys), max(xs), max(ys))
+    else:
+        bbox = (0.0, 0.0, 0.0, 0.0)
+    return ring, bbox
 
 
 def _door_center(door: Element) -> tuple[float, float]:

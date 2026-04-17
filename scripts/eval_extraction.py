@@ -125,13 +125,18 @@ def run_extraction(dxf_path: Path) -> dict[str, Any]:
     doors = [c for c in candidates if c.kind == ElementKind.DOOR]
     explicit_rooms = [c for c in candidates if c.kind == ElementKind.ROOM]
 
+    # Expand each wall's polyline into consecutive-vertex segments,
+    # matching the orchestrator's G-R5 handling so multi-vertex walls
+    # (L-shaped partitions, flattened SPLINEs) contribute every
+    # segment rather than a straight-chord approximation.
     wall_segments = []
     for w in walls:
         pts = w.geometry.get("points") or []
-        if len(pts) >= 2:
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]
             wall_segments.append((
-                (float(pts[0]["x"]), float(pts[0]["y"])),
-                (float(pts[-1]["x"]), float(pts[-1]["y"])),
+                (float(a["x"]), float(a["y"])),
+                (float(b["x"]), float(b["y"])),
             ))
 
     door_centers = []
@@ -141,16 +146,46 @@ def run_extraction(dxf_path: Path) -> dict[str, Any]:
             door_centers.append((float(c["x"]), float(c["y"])))
 
     derived_rooms = connectivity.derive_rooms_from_walls(wall_segments)
+
+    # G-O1 dedup: if an explicit A-ROOM polygon covers the same
+    # footprint as a derived wall-loop room, the orchestrator
+    # annotates the explicit element instead of inserting a
+    # duplicate. Mirror that here so the manifest's expected
+    # derived-room count matches what the DB would contain.
+    explicit_polygons = []
+    for er in explicit_rooms:
+        ring_raw = er.geometry.get("ring") or []
+        ring = [(float(p["x"]), float(p["y"])) for p in ring_raw]
+        if ring:
+            xs = [p[0] for p in ring]
+            ys = [p[1] for p in ring]
+            bbox = (min(xs), min(ys), max(xs), max(ys))
+        else:
+            bbox = (0.0, 0.0, 0.0, 0.0)
+        explicit_polygons.append((ring, bbox))
+    matches = connectivity.dedup_derived_against_explicit(
+        derived_rooms, explicit_polygons
+    )
+    derived_after_dedup = [
+        r for r, m in zip(derived_rooms, matches, strict=False) if m is None
+    ]
+    confirmed_explicit = sum(1 for m in matches if m is not None)
+
     hosting = connectivity.host_walls_for_doors(door_centers, wall_segments)
-    adjacencies = connectivity.room_adjacency_via_doors(derived_rooms, door_centers)
+    # Adjacency walks rings of the rooms you pass, so run it on the
+    # post-dedup list — that's what the DB will record too.
+    adjacencies = connectivity.room_adjacency_via_doors(
+        derived_after_dedup, door_centers
+    )
 
     hosted_doors = sum(1 for h in hosting if h.wall_index is not None)
 
     return {
         "candidate_counts": _counts_by_kind(candidates),
         "explicit_rooms": len(explicit_rooms),
+        "confirmed_explicit_rooms": confirmed_explicit,
         "derived_rooms": [
-            {"area": r.area, "bbox": r.bbox} for r in derived_rooms
+            {"area": r.area, "bbox": r.bbox} for r in derived_after_dedup
         ],
         "hosted_doors": hosted_doors,
         "adjacencies": len(adjacencies),
@@ -218,8 +253,32 @@ def compare(expected: dict[str, Any], actual: dict[str, Any]) -> list[CheckResul
                 detail=f"tolerance={tol:g}",
             ))
 
+    # G-O1: optional explicit-room checks. Manifests that draw an
+    # A-ROOM polygon alongside walls use these to assert the dedup
+    # kicked in (confirmed > 0) without inserting a duplicate.
+    exp_explicit = expected.get("explicit_rooms") or {}
+    if "count" in exp_explicit:
+        results.append(CheckResult(
+            label="explicit_rooms.count",
+            passed=actual["explicit_rooms"] == exp_explicit["count"],
+            expected=exp_explicit["count"],
+            actual=actual["explicit_rooms"],
+        ))
+    if "confirmed" in exp_explicit:
+        results.append(CheckResult(
+            label="explicit_rooms.confirmed",
+            passed=actual["confirmed_explicit_rooms"] == exp_explicit["confirmed"],
+            expected=exp_explicit["confirmed"],
+            actual=actual["confirmed_explicit_rooms"],
+        ))
+
     conn_expected = expected.get("connectivity") or {}
-    for key in ("hosted_doors", "derived_rooms", "adjacencies"):
+    for key in (
+        "hosted_doors",
+        "derived_rooms",
+        "confirmed_explicit_rooms",
+        "adjacencies",
+    ):
         if key not in conn_expected:
             continue
         exp_v = conn_expected[key]
