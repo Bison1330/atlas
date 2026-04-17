@@ -54,7 +54,11 @@ class AnnotationIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     element_id: UUID
-    author_name: str = Field(min_length=1, max_length=120)
+    # M8: ``author_name`` is now optional — defaults to the
+    # authenticated user's ``display_name`` (or email if no display
+    # name set). Clients that want a different pen name can still
+    # override.
+    author_name: str | None = Field(default=None, min_length=1, max_length=120)
     body: str = Field(min_length=1, max_length=4000)
 
 
@@ -81,6 +85,9 @@ class AnnotationOut(BaseModel):
     drawing_id: UUID
     element_id: UUID
     author_name: str
+    # M8: who (if anyone) wrote the note. Nullable — pre-M8 rows
+    # have no attached user; author_name remains the display.
+    author_user_id: UUID | None = None
     body: str
     created_at: Annotated[str, Field(description="ISO-8601 UTC timestamp")]
     updated_at: Annotated[str, Field(description="ISO-8601 UTC timestamp")]
@@ -144,6 +151,7 @@ def _to_out(session: Session, ann: Annotation) -> AnnotationOut:
         drawing_id=ann.drawing_id,
         element_id=ann.element_id,
         author_name=ann.author_name,
+        author_user_id=ann.author_user_id,
         body=ann.body,
         created_at=ann.created_at.isoformat(),
         updated_at=ann.updated_at.isoformat(),
@@ -165,16 +173,24 @@ def _to_out(session: Session, ann: Annotation) -> AnnotationOut:
 def create_annotation(
     drawing_id: UUID,
     body: AnnotationIn,
+    user: Annotated[User, Depends(current_user)],
     _owned: Annotated[Drawing, Depends(owned_drawing_for_write)],
     _csrf: Annotated[None, Depends(require_csrf)] = None,
     db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
 ) -> AnnotationOut:
+    # M8: default author_name to the current user's display_name
+    # (or email prefix when display_name is blank). Client-supplied
+    # override still wins.
+    resolved_author = body.author_name or (
+        user.display_name or user.email.split("@", 1)[0]
+    )
     ann = svc.create_annotation(
         db,
         drawing_id=drawing_id,
         element_id=body.element_id,
-        author_name=body.author_name,
+        author_name=resolved_author,
         body=body.body,
+        author_user_id=user.id,
     )
     return _to_out(db, ann)
 

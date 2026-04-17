@@ -31,8 +31,13 @@ def create_annotation(
     element_id: UUID,
     author_name: str,
     body: str,
+    author_user_id: UUID | None = None,
 ) -> Annotation:
     """Persist a new annotation after verifying the element → drawing link.
+
+    ``author_user_id`` (M8) records who wrote the note when the
+    caller is authenticated. Nullable to preserve the pre-M8 data
+    shape — existing rows stay unattributed, no backfill.
 
     Raises:
         NotFoundError: the drawing doesn't exist, or the element
@@ -69,6 +74,7 @@ def create_annotation(
         element_id=element_id,
         author_name=author_name,
         body=body,
+        author_user_id=author_user_id,
     )
     session.add(ann)
     session.commit()

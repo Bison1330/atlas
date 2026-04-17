@@ -110,6 +110,7 @@ class Drawing(TimestampMixin, Base):
         Index("ix_drawings_content_hash", "content_hash"),
         Index("ix_drawings_project_name", "project_name"),
         Index("ix_drawings_owner_id", "owner_id"),
+        Index("ix_drawings_project_id", "project_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -117,6 +118,14 @@ class Drawing(TimestampMixin, Base):
     owner_id: Mapped[UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    # M8: optional project assignment. NULL = personal drawing
+    # (owner-only). ON DELETE SET NULL so deleting a project
+    # (future M8.2) disassociates but doesn't wipe the drawings.
+    project_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -445,6 +454,76 @@ class Element(TimestampMixin, Base):
     )
 
 
+class Project(TimestampMixin, Base):
+    """A shared workspace grouping one or more drawings (M8).
+
+    Flat membership in v1 — no role column (D-15). Membership is
+    mediated by :class:`ProjectMember` rows; row existence alone
+    means "this user is in this project". M8.1 extends with roles.
+
+    ``created_by`` is RESTRICTed so a creator can't be deleted while
+    their projects still exist — M8.2 will add explicit
+    delete/transfer flows.
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(name) BETWEEN 1 AND 120",
+            name="ck_projects_name_len",
+        ),
+        CheckConstraint(
+            "description IS NULL OR char_length(description) BETWEEN 1 AND 2000",
+            name="ck_projects_description_len",
+        ),
+        Index("ix_projects_created_by", "created_by"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    created_by: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    creator: Mapped[User] = relationship()
+
+
+class ProjectMember(Base):
+    """Flat membership row: (project_id, user_id) composite PK.
+
+    No role column in M8. A future M8.1 migration adds one.
+    Deleting a user is RESTRICTed while they hold membership rows
+    — M8.2 handles graceful user deletion.
+    """
+
+    __tablename__ = "project_members"
+    __table_args__ = (
+        Index("ix_project_members_user_id", "user_id"),
+    )
+
+    project_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    project: Mapped[Project] = relationship()
+    user: Mapped[User] = relationship()
+
+
 class Annotation(TimestampMixin, Base):
     """User-authored note attached to a single extracted element (M6).
 
@@ -485,6 +564,7 @@ class Annotation(TimestampMixin, Base):
             "drawing_id", "created_at",
         ),
         Index("ix_annotations_element_id", "element_id"),
+        Index("ix_annotations_author_user_id", "author_user_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -502,6 +582,15 @@ class Annotation(TimestampMixin, Base):
     )
     author_name: Mapped[str] = mapped_column(String(120), nullable=False)
     body: Mapped[str] = mapped_column(String(4000), nullable=False)
+    # M8: tracks which user wrote the note. Nullable because pre-M8
+    # annotations have no attribution; ON DELETE SET NULL keeps the
+    # note readable if the author is later removed (GDPR-ish).
+    author_user_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     drawing: Mapped[Drawing] = relationship()
     element: Mapped[Element] = relationship()
+    author_user: Mapped[User | None] = relationship(foreign_keys=[author_user_id])
