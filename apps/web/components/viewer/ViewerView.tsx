@@ -140,14 +140,20 @@ export function ViewerView({ drawing }: Props) {
         </div>
       </div>
 
-      <SheetSwitcher
-        drawingId={drawing.id}
-        sheets={sheets}
-        active={active.id}
-        onSelect={setActiveId}
-      />
+      {/* Single-sheet drawings — which is every demo and most DXFs —
+          don't benefit from a filmstrip with one thumbnail in it; it
+          just steals hero real-estate above the fold. Only render
+          when there's actually a choice to make. */}
+      {sheets.length > 1 && (
+        <SheetSwitcher
+          drawingId={drawing.id}
+          sheets={sheets}
+          active={active.id}
+          onSelect={setActiveId}
+        />
+      )}
 
-      <div className="h-[70vh] min-h-[480px]">
+      <div className="h-[78vh] min-h-[520px]">
         {mode === "2d" ? (
           <SheetCanvas
             drawingId={drawing.id}
