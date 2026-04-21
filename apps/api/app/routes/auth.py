@@ -202,12 +202,12 @@ def register(
         window_seconds=settings.register_window_seconds,
     )
     if current > limit:
-        response.headers["Retry-After"] = str(retry_after)
         raise APIError(
             code="rate_limited",
             message="Too many registration attempts. Try again later.",
             status_code=429,
             details={"retry_after_seconds": retry_after},
+            headers={"Retry-After": str(retry_after)},
         )
 
     user = auth_svc.register_user(
@@ -248,12 +248,12 @@ def login(
         window_seconds=settings.login_window_seconds,
     )
     if current > limit:
-        response.headers["Retry-After"] = str(retry_after)
         raise APIError(
             code="rate_limited",
             message="Too many login attempts. Try again later.",
             status_code=429,
             details={"retry_after_seconds": retry_after},
+            headers={"Retry-After": str(retry_after)},
         )
 
     user = auth_svc.authenticate(db, email=str(body.email), password=body.password)

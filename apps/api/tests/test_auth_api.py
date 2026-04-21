@@ -95,6 +95,37 @@ class TestRegister:
         )
         assert r.status_code == 422
 
+    def test_rate_limit_triggers_429_with_retry_after(self, anon_client):
+        from app.core import redis as redis_mod
+
+        redis_mod.get_redis().flushdb()
+        # Configured register allowance is 3 per IP per hour; cycle
+        # through distinct emails so each request passes validation
+        # and reaches the rate-limit bucket.
+        for i in range(3):
+            r = anon_client.post(
+                "/auth/register",
+                json={
+                    "email": f"rl{i}@example.com",
+                    "password": "correct-horse-battery-staple",
+                },
+            )
+            anon_client.cookies.clear()
+            assert r.status_code == 201, r.text
+        # 4th request trips the limit.
+        r = anon_client.post(
+            "/auth/register",
+            json={"email": "rl3@example.com",
+                  "password": "correct-horse-battery-staple"},
+        )
+        assert r.status_code == 429
+        body = r.json()
+        assert body["error"]["code"] == "rate_limited"
+        assert body["error"]["details"]["retry_after_seconds"] > 0
+        retry_after_hdr = r.headers.get("retry-after")
+        assert retry_after_hdr is not None, list(r.headers.keys())
+        assert int(retry_after_hdr) > 0
+
 
 # ---------------------------------------------------------------------------
 # Login
@@ -159,9 +190,13 @@ class TestLogin:
         assert r.status_code == 429
         body = r.json()
         assert body["error"]["code"] == "rate_limited"
-        # retry_after_seconds is surfaced via the error body's details
-        # (the envelope keeps headers out of the primary contract).
         assert body["error"]["details"]["retry_after_seconds"] > 0
+        # Retry-After must travel on the response itself, not only in
+        # the body — well-behaved clients (browsers, fetch libraries,
+        # HTTP proxies) inspect the header.
+        retry_after_hdr = r.headers.get("retry-after")
+        assert retry_after_hdr is not None, list(r.headers.keys())
+        assert int(retry_after_hdr) > 0
 
 
 # ---------------------------------------------------------------------------
