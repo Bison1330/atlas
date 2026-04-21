@@ -30,6 +30,27 @@ import trimesh.boolean
 import trimesh.creation
 from pydantic import BaseModel, ConfigDict, Field
 
+# ``manifold3d`` is load-bearing in two places, neither of which shows
+# up in a static import scan of this file:
+#
+# 1. Wall/opening booleans call ``trimesh.boolean.difference`` and
+#    ``trimesh.boolean.union`` with ``engine="manifold"``.
+# 2. Floor triangulation calls ``trimesh.creation.triangulate_polygon``
+#    with ``engine="manifold"`` — the other engines trimesh ships
+#    (``earcut`` / ``triangle``) require extra pip packages that we
+#    deliberately do not depend on.
+#
+# If a future dependency update drops manifold3d, both floors and wall
+# voids silently regress. Fail loudly at import time instead.
+try:
+    import manifold3d  # noqa: F401
+except ImportError as e:  # pragma: no cover - env-level failure
+    raise ImportError(
+        "reconstruct3d requires manifold3d for both boolean operations "
+        "(wall/opening differences) and polygon triangulation (floor slabs). "
+        "Install with: pip install manifold3d>=2.5"
+    ) from e
+
 from atlas_core.enums import ElementKind, Units
 from atlas_core.geometry import Polygon as AtlasPolygon
 from atlas_core.geometry import Polyline
@@ -232,6 +253,8 @@ def reconstruct_sheet(
         if poly.is_empty or poly.area <= 0:
             continue
         try:
+            # engine="manifold" requires the manifold3d package. The
+            # import-time guard at the top of this module enforces it.
             verts_2d, faces = trimesh.creation.triangulate_polygon(poly, engine="manifold")
         except Exception as e:
             log.warning("floor triangulation failed for room %s: %s", room.id, e)
@@ -552,6 +575,8 @@ def _build_wall_segment_mesh(
         return wall_local, set()
 
     try:
+        # engine="manifold" requires the manifold3d package. The
+        # import-time guard at the top of this module enforces it.
         if len(subtractors) == 1:
             cut = trimesh.boolean.difference(
                 [wall_local, subtractors[0]], engine="manifold"
