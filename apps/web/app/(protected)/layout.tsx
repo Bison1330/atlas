@@ -17,6 +17,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ReactNode } from "react";
 
+import { DemoBanner } from "@/components/DemoBanner";
 import { authMeOrNull } from "@/lib/api-server";
 
 
@@ -35,5 +36,10 @@ export default async function ProtectedLayout({
     redirect(`/login?next=${encodeURIComponent(referer)}`);
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {user.is_demo && <DemoBanner />}
+      {children}
+    </>
+  );
 }

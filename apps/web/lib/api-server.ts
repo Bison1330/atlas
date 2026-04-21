@@ -15,7 +15,7 @@
 
 import { cookies } from "next/headers";
 
-import type { AuthUser, DrawingListResponse } from "./api";
+import type { AuthUser, DrawingListResponse, ProjectListResponse } from "./api";
 
 const INTERNAL_API_URL =
   process.env.INTERNAL_API_URL ?? "http://api:8000";
@@ -60,6 +60,20 @@ export async function listDrawingsServer(): Promise<DrawingListResponse | null> 
   if (res.status === 401) return null;
   if (!res.ok) {
     throw new Error(`/drawings returned ${res.status}`);
+  }
+  return res.json();
+}
+
+
+/** Server-side GET /projects. Returns null on 401 (let the page redirect). */
+export async function listProjectsServer(): Promise<ProjectListResponse | null> {
+  const res = await fetch(`${INTERNAL_API_URL}/projects`, {
+    headers: await forwardedHeaders(),
+    cache: "no-store",
+  });
+  if (res.status === 401) return null;
+  if (!res.ok) {
+    throw new Error(`/projects returned ${res.status}`);
   }
   return res.json();
 }

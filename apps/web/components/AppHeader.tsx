@@ -20,10 +20,16 @@ export function AppHeader({ trail }: { trail?: React.ReactNode }) {
         </div>
         <nav className="flex items-center gap-2 text-sm text-text-secondary">
           <Link
-            href="/"
+            href="/drawings"
             className="hidden rounded-md px-2 py-1 hover:text-text-primary sm:inline-block"
           >
-            Home
+            Drawings
+          </Link>
+          <Link
+            href="/projects"
+            className="hidden rounded-md px-2 py-1 hover:text-text-primary sm:inline-block"
+          >
+            Projects
           </Link>
           <Link
             href="/upload"

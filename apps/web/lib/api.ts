@@ -491,6 +491,88 @@ export async function askDrawing(
 }
 
 
+// ---------- M8: projects ----------
+
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface ProjectMember {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  joined_at: string;
+}
+
+
+export interface ProjectDetail extends ProjectSummary {
+  member_count: number;
+  drawing_count: number;
+  members: ProjectMember[];
+  warnings: { flat_membership: boolean };
+}
+
+
+export interface ProjectListResponse {
+  projects: ProjectSummary[];
+}
+
+
+export async function listProjects(signal?: AbortSignal): Promise<ProjectListResponse> {
+  const res = await fetchApi("/projects", { signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function createProject(
+  body: { name: string; description?: string },
+  signal?: AbortSignal,
+): Promise<ProjectDetail> {
+  const res = await fetchApi("/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function getProject(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ProjectDetail> {
+  const res = await fetchApi(`/projects/${id}`, { signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function assignDrawingToProject(
+  drawingId: string,
+  projectId: string | null,
+  signal?: AbortSignal,
+): Promise<{ drawing_id: string; project_id: string | null }> {
+  const res = await fetchApi(`/drawings/${drawingId}/project`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId }),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
 // ---------- M7: auth ----------
 
 
@@ -500,6 +582,7 @@ export interface AuthUser {
   email_verified: boolean;
   display_name: string | null;
   is_active: boolean;
+  is_demo: boolean;
   last_login_at: string | null;
 }
 
@@ -537,6 +620,16 @@ export async function authLogin(
 export async function authLogout(signal?: AbortSignal): Promise<void> {
   const res = await fetchApi("/auth/logout", { method: "POST", signal });
   if (!res.ok) throw await parseError(res);
+}
+
+
+/** Start a session for the shared demo account. No credentials required;
+ * server-side the endpoint only grants access when the single allow-listed
+ * demo user exists with ``is_demo=true``. */
+export async function authDemoLogin(signal?: AbortSignal): Promise<AuthUser> {
+  const res = await fetchApi("/auth/demo-login", { method: "POST", signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
 }
 
 
