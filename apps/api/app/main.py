@@ -23,6 +23,7 @@ from app.routes import (
     elements,
     extractions,
     health,
+    model3d,
     projects,
     qa,
     sheets,
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(extractions.router)
     app.include_router(takeoffs.router)
     app.include_router(connectivity.router)
+    app.include_router(model3d.router)
     app.include_router(qa.router)
     app.include_router(annotations.drawing_router)
     app.include_router(annotations.element_router)
