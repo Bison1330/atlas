@@ -81,6 +81,14 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true",
     )
+    # Marks an account as the shared demo/prospect account. The
+    # ``/auth/demo-login`` endpoint requires this to be True *and*
+    # matches the email against a hardcoded allow-list — neither
+    # check alone grants access. Also used client-side to render
+    # the "shared demo data" banner.
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
     )

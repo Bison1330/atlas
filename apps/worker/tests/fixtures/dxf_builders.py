@@ -495,3 +495,176 @@ def build_spline_wall_floor(path: Path) -> Path:
 
     doc.saveas(str(path))
     return path
+
+
+# ---------------------------------------------------------------------------
+# Demo presets — richer floor plans for the shared demo account.
+# Each preset aims for a plausible real-world footprint at a different
+# scale / typology so the demo walk-through feels varied rather than
+# "the same square room in four colors".
+# ---------------------------------------------------------------------------
+
+
+def build_bungalow_floor(path: Path) -> Path:
+    """Single-family bungalow: ~8 walls, 2 doors, 3 rooms.
+
+    Layout (Y up, 12×10 footprint)::
+
+        +----+------+-------+     y=10
+        |    |      |       |
+        | R1 |  R2  |  R3   |
+        |    |      |       |
+        +D---+--D---+-------+     y=0
+
+    Entry door on R1's south wall; internal door between R1 and R2.
+    Small enough to read at a glance, big enough to exercise room-
+    derivation on a non-square footprint.
+    """
+    doc = _new_doc()
+    msp = doc.modelspace()
+
+    # Exterior perimeter
+    for a, b in [
+        ((0, 0), (12, 0)),   # south
+        ((12, 0), (12, 10)), # east
+        ((12, 10), (0, 10)), # north
+        ((0, 10), (0, 0)),   # west
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+    # Two interior partitions → 3 rooms
+    msp.add_line((4, 0), (4, 10), dxfattribs={"layer": "A-WALL-INTR"})
+    msp.add_line((8, 0), (8, 10), dxfattribs={"layer": "A-WALL-INTR"})
+
+    # Doors — one exterior entry on south, one interior between R1↔R2
+    msp.add_arc(
+        center=(2, 0), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+    msp.add_arc(
+        center=(4, 5), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_office_floor(path: Path) -> Path:
+    """Small office fit-out: ~16 walls, 4 doors, 1 window, 6+ rooms.
+
+    Layout: a perimeter with a central corridor running east-west and
+    offices opening onto it — reception at the south end, two private
+    offices and a conference room on each side::
+
+        +--+---+--+---+--+---+     y=12
+        |R1 |R2| R3|R4| R5 |R6|
+        |   |  |   |  |    |  |
+        +D--+D-+D--+D-+----+--+     y=7   (south side of corridor)
+        |        CORRIDOR      |
+        +----------------------+     y=5   (north side of reception)
+        |      Reception       |
+        |                      |
+        +----------D-----------+     y=0  (entry)
+
+    Rooms: 6 offices/rooms across the top, one large reception below
+    the corridor. 4 office doors onto corridor + 1 entry door, plus a
+    window INSERT on the north exterior.
+    """
+    doc = _new_doc()
+    door_block = _ensure_door_block(doc)
+    window_block = _ensure_window_block(doc)
+    msp = doc.modelspace()
+
+    # Exterior perimeter (24 × 12)
+    for a, b in [
+        ((0, 0), (24, 0)),
+        ((24, 0), (24, 12)),
+        ((24, 12), (0, 12)),
+        ((0, 12), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # Horizontal corridor walls
+    msp.add_line((0, 5), (24, 5), dxfattribs={"layer": "A-WALL-INTR"})
+    msp.add_line((0, 7), (24, 7), dxfattribs={"layer": "A-WALL-INTR"})
+
+    # Vertical partitions above corridor (between the 6 offices)
+    for x in (4, 8, 12, 16, 20):
+        msp.add_line((x, 7), (x, 12), dxfattribs={"layer": "A-WALL-INTR"})
+
+    # Office doors onto the corridor (y=7). 4 of 6 offices have a door
+    # (R2, R3, R4, R5); R1 and R6 remain unlocked-by-door so the room
+    # derivation doesn't end up trivially isomorphic.
+    for x in (6, 10, 14, 18):
+        msp.add_arc(
+            center=(x, 7), radius=1, start_angle=0, end_angle=90,
+            dxfattribs={"layer": "A-DOOR"},
+        )
+
+    # Entry door on the south wall — INSERT-style for variety
+    msp.add_blockref(
+        door_block, insert=(12, 0), dxfattribs={"layer": "A-DOOR"}
+    )
+
+    # A window on the north wall near the middle
+    msp.add_blockref(
+        window_block, insert=(12, 12), dxfattribs={"layer": "A-WIND"}
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
+def build_retail_floor(path: Path) -> Path:
+    """Retail buildout: ~6 walls, 1 door, 1 window, 1 large room + small
+    back office.
+
+    Layout (Y up, 20×12 footprint): one open sales floor on the south,
+    a narrow stock-room strip on the north, separated by a single
+    interior wall with a pass-through door::
+
+        +-------------------+     y=12
+        |   Stock room      |
+        +-----------D-------+     y=8
+        |                   |
+        |   Sales floor     |
+        |                   |
+        +---------D---------+     y=0
+
+    Window on the south (storefront). Door into the shop from the
+    sidewalk (south) + internal door between floor and stock room.
+    """
+    doc = _new_doc()
+    window_block = _ensure_window_block(doc)
+    msp = doc.modelspace()
+
+    # Exterior perimeter
+    for a, b in [
+        ((0, 0), (20, 0)),
+        ((20, 0), (20, 12)),
+        ((20, 12), (0, 12)),
+        ((0, 12), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # One interior partition separating stock room from sales floor
+    msp.add_line((0, 8), (20, 8), dxfattribs={"layer": "A-WALL-INTR"})
+
+    # Entry door from sidewalk (south)
+    msp.add_arc(
+        center=(10, 0), radius=1.2, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+    # Internal pass-through to stock room
+    msp.add_arc(
+        center=(14, 8), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+
+    # Storefront window
+    msp.add_blockref(
+        window_block, insert=(6, 0), dxfattribs={"layer": "A-WIND"}
+    )
+
+    doc.saveas(str(path))
+    return path
