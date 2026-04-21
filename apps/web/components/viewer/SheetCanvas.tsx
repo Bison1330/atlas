@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { SheetSummary, tileUrl } from "@/lib/api";
+import { SheetSummary, sheetHas2DTiles, tileUrl } from "@/lib/api";
 
 interface Props {
   drawingId: string;
   sheet: SheetSummary;
+  /** Called when the empty-state CTA is clicked to jump to 3D. */
+  onSwitchToMode3D?: () => void;
 }
 
 /**
@@ -19,16 +21,26 @@ interface Props {
  *
  * The library is imported dynamically so it never enters the SSR
  * bundle (it touches `window` and `document` at module load).
+ *
+ * DXF-sourced drawings skip the rasterize/tile pipeline entirely and
+ * have no 2D tile metadata. We detect that up front with
+ * :func:`sheetHas2DTiles` and render a friendly empty state with a
+ * "Switch to 3D" CTA instead of booting OpenSeadragon (which would
+ * surface a red programmer-facing error — the first thing external
+ * reviewers saw on demo drawings).
  */
-export function SheetCanvas({ drawingId, sheet }: Props) {
+export function SheetCanvas({ drawingId, sheet, onSwitchToMode3D }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
+  const hasTiles = sheetHas2DTiles(sheet);
+
   useEffect(() => {
     if (!containerRef.current) return;
-    if (!sheet.width_px || !sheet.height_px || sheet.max_zoom == null || !sheet.tile_size) {
-      setError("Sheet metadata is incomplete — cannot construct the tile source.");
+    if (!hasTiles) {
+      // Don't try to construct a TileSource for a DXF-sourced sheet;
+      // the empty-state UI below handles this path.
       return;
     }
 
@@ -102,7 +114,37 @@ export function SheetCanvas({ drawingId, sheet }: Props) {
       cancelled = true;
       if (viewer) viewer.destroy();
     };
-  }, [drawingId, sheet]);
+  }, [drawingId, sheet, hasTiles]);
+
+  // Friendly empty state for DXF-sourced drawings without 2D tiles.
+  // Explicitly *not* the red error treatment — this is expected state,
+  // not a bug, and pushing the user straight to 3D is the actionable
+  // move.
+  if (!hasTiles) {
+    return (
+      <div className="relative flex h-full w-full items-center justify-center rounded-xl border border-border-subtle bg-bg-surface p-6 text-center">
+        <div className="max-w-md space-y-3">
+          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-text-muted">
+            2D preview unavailable
+          </p>
+          <p className="text-sm text-text-secondary">
+            This drawing was ingested from a DXF, so there are no
+            rasterized 2D tiles. Switch to 3D to explore the extracted
+            geometry.
+          </p>
+          {onSwitchToMode3D && (
+            <button
+              type="button"
+              onClick={onSwitchToMode3D}
+              className="rounded-md border border-border-subtle bg-bg-elevated px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:border-text-muted hover:bg-bg-surface"
+            >
+              Switch to 3D
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl border border-border-subtle bg-black/40">

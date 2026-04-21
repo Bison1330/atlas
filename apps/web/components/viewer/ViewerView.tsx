@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { DrawingSummary } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { DrawingSummary, sheetHas2DTiles } from "@/lib/api";
 import { Model3DCanvas } from "./Model3DCanvas";
 import { SheetCanvas } from "./SheetCanvas";
 import { SheetSwitcher } from "./SheetSwitcher";
@@ -20,12 +20,32 @@ type ViewMode = "2d" | "3d";
  * to the first page, "v" to toggle the 2D ↔ 3D canvas. We
  * deliberately do *not* swallow input that any normal text field
  * would handle.
+ *
+ * **Default mode** is chosen from the first sheet's metadata: DXF-
+ * sourced drawings have no 2D tiles, so landing on 2D would show a
+ * "preview unavailable" empty state. We pick 3D up front for those,
+ * and disable the 2D pill with a tooltip.
  */
 export function ViewerView({ drawing }: Props) {
   const sheets = drawing.sheets;
   const [activeId, setActiveId] = useState<string | null>(sheets[0]?.id ?? null);
-  const [mode, setMode] = useState<ViewMode>("2d");
+
   const active = sheets.find((s) => s.id === activeId) ?? sheets[0] ?? null;
+  const twoDAvailable = useMemo(
+    () => sheets.some(sheetHas2DTiles),
+    [sheets],
+  );
+  const [mode, setMode] = useState<ViewMode>(twoDAvailable ? "2d" : "3d");
+  const activeHasTiles = active ? sheetHas2DTiles(active) : false;
+
+  // If the user navigates to a sheet that lacks 2D tiles while in 2D
+  // mode, slide over to 3D automatically — beats the empty state on
+  // sheet-change.
+  useEffect(() => {
+    if (mode === "2d" && active && !activeHasTiles) {
+      setMode("3d");
+    }
+  }, [mode, active, activeHasTiles]);
 
   const goto = useCallback(
     (delta: number) => {
@@ -49,12 +69,18 @@ export function ViewerView({ drawing }: Props) {
       else if (e.key === "ArrowLeft" || e.key === "k") goto(-1);
       else if (e.key === "1" && sheets[0]) setActiveId(sheets[0].id);
       else if (e.key === "v" || e.key === "V") {
-        setMode((prev) => (prev === "2d" ? "3d" : "2d"));
+        setMode((prev) => {
+          // Respect the 2D-unavailable guard here too — `V` is a
+          // power-user shortcut, but it still shouldn't land on a
+          // broken mode.
+          if (prev === "3d" && !activeHasTiles) return "3d";
+          return prev === "2d" ? "3d" : "2d";
+        });
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [goto, sheets]);
+  }, [goto, sheets, activeHasTiles]);
 
   if (!active) {
     return (
@@ -77,26 +103,40 @@ export function ViewerView({ drawing }: Props) {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface p-0.5">
-            {(["2d", "3d"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                aria-pressed={mode === m}
-                className={[
-                  "rounded-md px-3 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors",
-                  mode === m
-                    ? "bg-accent/15 text-accent shadow-glow"
-                    : "text-text-muted hover:text-text-secondary",
-                ].join(" ")}
-              >
-                {m}
-              </button>
-            ))}
+            {(["2d", "3d"] as const).map((m) => {
+              const disabled = m === "2d" && !activeHasTiles;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => !disabled && setMode(m)}
+                  aria-pressed={mode === m}
+                  aria-disabled={disabled}
+                  disabled={disabled}
+                  title={
+                    disabled
+                      ? "Not available for this drawing"
+                      : undefined
+                  }
+                  className={[
+                    "rounded-md px-3 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors",
+                    mode === m
+                      ? "bg-accent/15 text-accent shadow-glow"
+                      : disabled
+                      ? "cursor-not-allowed text-text-muted/40"
+                      : "text-text-muted hover:text-text-secondary",
+                  ].join(" ")}
+                >
+                  {m}
+                </button>
+              );
+            })}
           </div>
-          <p className="font-mono text-[11px] text-text-muted">
-            {active.width_px}×{active.height_px}px · {active.dpi} DPI · zoom 0–{active.max_zoom}
-          </p>
+          {mode === "2d" && activeHasTiles && (
+            <p className="font-mono text-[11px] text-text-muted">
+              {active.width_px}×{active.height_px}px · {active.dpi} DPI · zoom 0–{active.max_zoom}
+            </p>
+          )}
         </div>
       </div>
 
@@ -109,7 +149,11 @@ export function ViewerView({ drawing }: Props) {
 
       <div className="h-[70vh] min-h-[480px]">
         {mode === "2d" ? (
-          <SheetCanvas drawingId={drawing.id} sheet={active} />
+          <SheetCanvas
+            drawingId={drawing.id}
+            sheet={active}
+            onSwitchToMode3D={() => setMode("3d")}
+          />
         ) : (
           <Model3DCanvas drawingId={drawing.id} sheet={active} />
         )}

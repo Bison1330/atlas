@@ -266,6 +266,22 @@ export function previewUrl(drawingId: string, sheetId: string): string {
   return `${API_BASE}/drawings/${drawingId}/sheets/${sheetId}/preview.webp`;
 }
 
+/** Whether a sheet carries the full set of metadata required by the
+ * deep-zoom tile viewer. DXF-sourced drawings skip the rasterize +
+ * tile pipeline, so ``width_px / height_px / max_zoom / tile_size``
+ * are all NULL. Use this to pick the default viewer mode and gate
+ * the 2D pill — attempting to open OpenSeadragon against a
+ * tile-less sheet is what produced the "VIEWER ERROR" the external
+ * review flagged. */
+export function sheetHas2DTiles(sheet: SheetSummary): boolean {
+  return (
+    sheet.width_px != null &&
+    sheet.height_px != null &&
+    sheet.max_zoom != null &&
+    sheet.tile_size != null
+  );
+}
+
 export function tileUrl(
   drawingId: string,
   sheetId: string,
