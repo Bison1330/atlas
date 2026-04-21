@@ -40,9 +40,13 @@ sys.path.insert(0, str(_REPO_ROOT / "apps" / "worker"))
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from atlas_db import Drawing, Sheet, User  # noqa: E402
+from atlas_db import Drawing, Element, Sheet, User  # noqa: E402
 from tests.fixtures.dxf_builders import (  # noqa: E402
-    build_apartment_grid_floor,
+    APARTMENT_ROOM_LABELS,
+    BUNGALOW_ROOM_LABELS,
+    OFFICE_ROOM_LABELS,
+    RETAIL_ROOM_LABELS,
+    build_apartment_floor,
     build_bungalow_floor,
     build_office_floor,
     build_retail_floor,
@@ -59,6 +63,12 @@ class DemoDrawingSpec:
     filename: str
     title: str
     builder: callable  # type: ignore[type-arg]
+    # Per-room (name, centroid_x, centroid_y) from the builder. After
+    # extraction, each derived ``room`` element is matched to the
+    # closest entry by centroid and has ``Element.name`` populated.
+    # Without this, the 3D viewer labels every room "Room" — which
+    # the external review flagged as synthetic-looking.
+    room_labels: tuple[tuple[str, float, float], ...]
 
 
 DEMO_DRAWINGS: tuple[DemoDrawingSpec, ...] = (
@@ -66,23 +76,79 @@ DEMO_DRAWINGS: tuple[DemoDrawingSpec, ...] = (
         filename="demo_bungalow.dxf",
         title="Single-family bungalow",
         builder=build_bungalow_floor,
+        room_labels=BUNGALOW_ROOM_LABELS,
     ),
     DemoDrawingSpec(
         filename="demo_apartment.dxf",
         title="2-bedroom apartment",
-        builder=build_apartment_grid_floor,
+        builder=build_apartment_floor,
+        room_labels=APARTMENT_ROOM_LABELS,
     ),
     DemoDrawingSpec(
         filename="demo_office.dxf",
         title="Small office",
         builder=build_office_floor,
+        room_labels=OFFICE_ROOM_LABELS,
     ),
     DemoDrawingSpec(
         filename="demo_retail.dxf",
         title="Retail space",
         builder=build_retail_floor,
+        room_labels=RETAIL_ROOM_LABELS,
     ),
 )
+
+
+def _assign_room_names(
+    session: Session,
+    *,
+    drawing_id,
+    sheet_id,
+    labels: tuple[tuple[str, float, float], ...],
+) -> int:
+    """Match derived rooms to the builder's named specs by centroid.
+
+    Derived rooms arrive with ``name=NULL``; the builder knows that
+    the room centred near (cx, cy) is "kitchen" or "living_room". We
+    iterate the rooms, find the closest unmatched label by squared
+    distance to the room's bbox centroid, and write ``Element.name``.
+
+    Greedy match: each label is used at most once. If the builder's
+    label list is longer than the number of derived rooms (e.g. a
+    partition that didn't close into a full polygon), leftover
+    labels are silently dropped — there's nothing to attach them
+    to, and the viewer falls back to "Room" for any un-named
+    element.
+    """
+    rooms = session.execute(
+        select(Element).where(
+            Element.sheet_id == sheet_id,
+            Element.kind == "room",
+        )
+    ).scalars().all()
+
+    remaining = list(labels)
+    assigned = 0
+    for room in rooms:
+        bbox = room.bbox or {}
+        try:
+            cx = (float(bbox["minx"]) + float(bbox["maxx"])) / 2
+            cy = (float(bbox["miny"]) + float(bbox["maxy"])) / 2
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not remaining:
+            break
+        best_idx = min(
+            range(len(remaining)),
+            key=lambda i: (remaining[i][1] - cx) ** 2 + (remaining[i][2] - cy) ** 2,
+        )
+        best_name = remaining.pop(best_idx)[0]
+        room.name = best_name
+        session.add(room)
+        assigned += 1
+    if assigned:
+        session.commit()
+    return assigned
 
 
 def _resolve_database_url() -> str:
@@ -181,13 +247,21 @@ def _seed_one_drawing(
     summary = extract_from_dxf(session, drawing.id, dxf_path, sheet_id=sheet.id)
     session.commit()
 
+    named = _assign_room_names(
+        session,
+        drawing_id=drawing.id,
+        sheet_id=sheet.id,
+        labels=spec.room_labels,
+    )
+
     by_kind = summary.elements_by_kind
     print(
         f"  + {spec.filename}: "
         f"{by_kind.get('wall', 0)} walls, "
         f"{by_kind.get('door', 0)} doors, "
         f"{by_kind.get('window', 0)} windows, "
-        f"{by_kind.get('room', 0)} rooms"
+        f"{by_kind.get('room', 0)} rooms "
+        f"({named} named)"
     )
 
 
