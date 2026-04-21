@@ -7,6 +7,8 @@ set so unhandled job exceptions get reported.
 
 from __future__ import annotations
 
+import os
+
 import sentry_sdk
 from redis import Redis
 from rq import Queue, Worker
@@ -28,6 +30,11 @@ def _init_sentry(settings: WorkerSettings) -> None:
 
 
 def run() -> None:
+    # Signal to ``worker.events`` (and anything else that cares) that
+    # we are a real worker process, not a CLI / script / test fixture.
+    # Connection errors here should page; elsewhere they're expected.
+    os.environ["ATLAS_WORKER_PROCESS"] = "1"
+
     settings = get_settings()
     configure_logging(settings.log_level, production=settings.is_production)
     _init_sentry(settings)
