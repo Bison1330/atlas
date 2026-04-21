@@ -71,6 +71,7 @@ class Model3DStats(BaseModel):
     missing_window_width: int = 0
     missing_wall_thickness: int = 0
     synthesized_insert_bbox: int = 0
+    unhostable_openings: int = 0
     dropped_elements: int = 0
 
 
@@ -154,6 +155,7 @@ def get_model3d(
             missing_window_width=translator_stats.missing_window_width,
             missing_wall_thickness=translator_stats.missing_wall_thickness,
             synthesized_insert_bbox=translator_stats.synthesized_insert_bbox,
+            unhostable_openings=translator_stats.unhostable_openings,
             dropped_elements=translator_stats.dropped_elements,
         ),
     )

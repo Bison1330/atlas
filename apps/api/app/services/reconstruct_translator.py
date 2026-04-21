@@ -54,18 +54,29 @@ class TranslatorStats:
     Surfaces in the API response so we can watch how often real
     drawings need default-patching and decide when to prioritise
     the proper extractor fix.
+
+    ``unhostable_openings`` is called out as its own counter (in
+    addition to being counted in ``dropped_elements`` /
+    ``dropped_reasons``) because it's a direct signal of extractor-
+    output quality: the number of doors/windows we saw whose geometry
+    couldn't produce a usable centre. Session 2.6 baseline is 0 on
+    the apartment-grid sample; non-zero in the wild should push
+    extractor-widening up the priority list.
     """
 
     missing_door_width: int = 0
     missing_window_width: int = 0
     missing_wall_thickness: int = 0
     synthesized_insert_bbox: int = 0
+    unhostable_openings: int = 0
     dropped_elements: int = 0
     dropped_reasons: dict[str, int] = field(default_factory=dict)
 
     def _dropped(self, reason: str) -> None:
         self.dropped_elements += 1
         self.dropped_reasons[reason] = self.dropped_reasons.get(reason, 0) + 1
+        if reason == "unhostable_opening":
+            self.unhostable_openings += 1
 
 
 def elements_to_structured_sheet(
@@ -213,6 +224,11 @@ def _translate_door(
         stats=stats,
         default_insert_bbox_m=default_insert_bbox_m,
     )
+    if bbox is None:
+        # Neither an extractor bbox nor a computable centre — we
+        # can't tell reconstruct3d where to cut the void. Drop the
+        # element rather than let it sneak through unplaceable.
+        raise _Unsalvageable("unhostable_opening")
 
     return Door(
         id=row.id,
@@ -250,6 +266,8 @@ def _translate_window(
         stats=stats,
         default_insert_bbox_m=default_insert_bbox_m,
     )
+    if bbox is None:
+        raise _Unsalvageable("unhostable_opening")
 
     return Window(
         id=row.id,
@@ -434,40 +452,83 @@ def _bbox_or_synthesize(
     default_insert_bbox_m: float,
 ) -> BoundingBox | None:
     """Prefer the extractor's bbox; otherwise centre a default box on the
-    element's geometry anchor.
+    element's computed geometric centre.
 
-    The only real-world miss so far is INSERT-sourced doors and windows
-    (ezdxf reports the insertion point but not the block's extents), so
-    we fall back to a square of side ``default_insert_bbox_m`` centred
-    on ``geometry.center``. That's lossy — the real shape is whatever
-    the block contains — but it gives ``reconstruct3d`` a bbox centre
-    to project onto the host wall's centerline, which is all it needs.
+    The pre-fix version only handled INSERT geometries (ezdxf reports
+    the insertion point but not the block's extents). A door or
+    window authored as a polyline or arc would return None here and
+    be silently dropped downstream. Now we dispatch per geometry
+    kind — see :func:`_compute_geometry_center` — so any shape with a
+    computable centre gets a synthesized bbox.
+
+    Returns ``None`` only when neither the extractor's bbox nor the
+    geometry can produce a centre; the caller treats that as
+    ``_Unsalvageable("unhostable_opening")``.
     """
     existing = _bbox_from_dict(row.bbox)
     if existing is not None:
         return existing
 
-    geom = row.geometry or {}
-    if geom.get("kind") != "insert":
-        # No anchor point to centre on — leave None and let
-        # reconstruct3d decide whether it can still place the element.
-        return None
-    center = geom.get("center") or {}
-    try:
-        cx = float(center["x"])
-        cy = float(center["y"])
-    except (KeyError, TypeError, ValueError):
+    center = _compute_geometry_center(row.geometry)
+    if center is None:
         return None
 
+    cx, cy = center
     half = default_insert_bbox_m / 2.0
     stats.synthesized_insert_bbox += 1
     log.info(
         "translator.bbox_synthesized",
         element_id=str(row.id),
         kind=row.kind,
+        geometry_kind=(row.geometry or {}).get("kind"),
         center=[cx, cy],
         side_m=default_insert_bbox_m,
     )
     return BoundingBox(
         minx=cx - half, miny=cy - half, maxx=cx + half, maxy=cy + half
     )
+
+
+def _compute_geometry_center(
+    geometry: dict[str, Any] | None,
+) -> tuple[float, float] | None:
+    """Dispatch a geometry dict to its computed centre.
+
+    Mirrors ``worker.jobs.extract._opening_center`` — both layers
+    share the same per-kind rules so the worker's hosting decision
+    and the translator's bbox-synthesis decision agree. Returning
+    ``None`` is the explicit "can't produce a centre" signal.
+    """
+    if not geometry:
+        return None
+    kind = geometry.get("kind")
+
+    if kind in ("insert", "arc", "circle"):
+        c = geometry.get("center") or {}
+        try:
+            return (float(c["x"]), float(c["y"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    if kind == "polyline":
+        return _mean_xy(geometry.get("points") or [])
+    if kind == "polygon":
+        return _mean_xy(geometry.get("ring") or [])
+
+    return None
+
+
+def _mean_xy(pts: list[Any]) -> tuple[float, float] | None:
+    sx = 0.0
+    sy = 0.0
+    n = 0
+    for p in pts:
+        try:
+            sx += float(p["x"])
+            sy += float(p["y"])
+            n += 1
+        except (KeyError, TypeError, ValueError):
+            continue
+    if n == 0:
+        return None
+    return (sx / n, sy / n)

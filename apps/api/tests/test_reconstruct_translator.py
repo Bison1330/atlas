@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
+import pytest
+
 from app.db import Element, Sheet
 from app.services.reconstruct_translator import (
     TranslatorStats,
@@ -264,6 +266,116 @@ class TestOther:
         sheet, stats = elements_to_structured_sheet(_sheet(), [w])
         assert sheet.elements == []
         assert stats.dropped_reasons == {"wall_missing_centerline": 1}
+
+
+class TestOpeningCenterDispatch:
+    """Regression tests for the (0, 0) fallback bug.
+
+    Pre-fix, any door/window whose geometry lacked an extractor-
+    computed bbox AND wasn't an INSERT fell through to ``bbox=None``
+    and got silently dropped by reconstruct3d. Now the translator
+    dispatches per geometry kind (polyline/arc/circle/polygon) and
+    synthesises a bbox around the real centre.
+    """
+
+    def test_polyline_door_without_bbox_synthesises_bbox_at_real_center(self):
+        # Polyline door: two points at y=0.05, centre at x=3.
+        pts = [{"x": 2.55, "y": 0.05}, {"x": 3.45, "y": 0.05}]
+        d = Element(
+            id=uuid4(), sheet_id=uuid4(), source_id=uuid4(),
+            kind="door", host_element_id=uuid4(),
+            geometry={"kind": "polyline", "points": pts},
+            bbox=None,
+            attrs={"source_entity": "LWPOLYLINE"},
+            ifc_properties={},
+        )
+        sheet, stats = elements_to_structured_sheet(
+            _sheet(), [d], default_insert_bbox_m=0.5
+        )
+        assert len(sheet.elements) == 1
+        assert stats.unhostable_openings == 0
+        assert stats.synthesized_insert_bbox == 1
+        bb = sheet.elements[0].bbox
+        assert bb is not None
+        # Bbox is centred on the polyline's mean point (3.0, 0.05).
+        assert (bb.minx + bb.maxx) / 2 == pytest.approx(3.0, abs=1e-6)
+        assert (bb.miny + bb.maxy) / 2 == pytest.approx(0.05, abs=1e-6)
+
+    def test_polyline_window_without_bbox_synthesises_bbox(self):
+        pts = [{"x": 5.5, "y": 8.0}, {"x": 6.5, "y": 8.0}]
+        wn = Element(
+            id=uuid4(), sheet_id=uuid4(), source_id=uuid4(),
+            kind="window", host_element_id=uuid4(),
+            geometry={"kind": "polyline", "points": pts},
+            bbox=None,
+            attrs={"source_entity": "LWPOLYLINE"},
+            ifc_properties={},
+        )
+        sheet, stats = elements_to_structured_sheet(_sheet(), [wn])
+        assert len(sheet.elements) == 1
+        assert stats.unhostable_openings == 0
+        assert stats.synthesized_insert_bbox == 1
+        bb = sheet.elements[0].bbox
+        assert (bb.minx + bb.maxx) / 2 == pytest.approx(6.0, abs=1e-6)
+
+    def test_arc_door_without_bbox_synthesises_from_arc_center(self):
+        d = Element(
+            id=uuid4(), sheet_id=uuid4(), source_id=uuid4(),
+            kind="door", host_element_id=uuid4(),
+            geometry={
+                "kind": "arc", "center": {"x": 7.0, "y": 6.0},
+                "radius": 1.0, "start_angle_deg": 0.0, "end_angle_deg": 90.0,
+            },
+            bbox=None,
+            attrs={"source_entity": "ARC", "swing_angle_deg": 90.0},
+            ifc_properties={},
+        )
+        sheet, stats = elements_to_structured_sheet(_sheet(), [d])
+        bb = sheet.elements[0].bbox
+        assert (bb.minx + bb.maxx) / 2 == pytest.approx(7.0, abs=1e-6)
+        assert (bb.miny + bb.maxy) / 2 == pytest.approx(6.0, abs=1e-6)
+        assert stats.unhostable_openings == 0
+
+    def test_unknown_geometry_door_is_unhostable(self):
+        d = Element(
+            id=uuid4(), sheet_id=uuid4(), source_id=uuid4(),
+            kind="door", host_element_id=uuid4(),
+            geometry={"kind": "raw", "entity_type": "HATCH"},
+            bbox=None, attrs={}, ifc_properties={},
+        )
+        sheet, stats = elements_to_structured_sheet(_sheet(), [d])
+        assert sheet.elements == []
+        assert stats.unhostable_openings == 1
+        assert stats.dropped_elements == 1
+        assert stats.dropped_reasons == {"unhostable_opening": 1}
+
+    def test_window_with_no_geometry_is_unhostable(self):
+        wn = Element(
+            id=uuid4(), sheet_id=uuid4(), source_id=uuid4(),
+            kind="window", host_element_id=uuid4(),
+            geometry={}, bbox=None, attrs={}, ifc_properties={},
+        )
+        sheet, stats = elements_to_structured_sheet(_sheet(), [wn])
+        assert sheet.elements == []
+        assert stats.unhostable_openings == 1
+
+    def test_pathological_polyline_near_origin_does_not_synthesise_at_origin(self):
+        # Regression guard for the (0, 0) fallback bug: a polyline
+        # opening NEAR but not AT origin must synthesise its bbox
+        # around its real centre, not around origin.
+        pts = [{"x": 100.0, "y": 100.0}, {"x": 100.5, "y": 100.0}]
+        d = Element(
+            id=uuid4(), sheet_id=uuid4(), source_id=uuid4(),
+            kind="door", host_element_id=uuid4(),
+            geometry={"kind": "polyline", "points": pts},
+            bbox=None, attrs={}, ifc_properties={},
+        )
+        sheet, stats = elements_to_structured_sheet(_sheet(), [d])
+        bb = sheet.elements[0].bbox
+        # Bbox centre near (100.25, 100) — NOT near origin.
+        assert (bb.minx + bb.maxx) / 2 == pytest.approx(100.25, abs=1e-6)
+        assert bb.minx > 99 and bb.maxx < 101
+        assert stats.unhostable_openings == 0
 
 
 class TestMixedBatch:

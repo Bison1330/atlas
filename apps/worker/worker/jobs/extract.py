@@ -352,6 +352,7 @@ def _run_connectivity_analysis(
         return {
             "hosted_doors": 0,
             "hosted_windows": 0,
+            "unhostable_openings": 0,
             "derived_rooms": 0,
             "adjacencies": 0,
         }
@@ -369,16 +370,23 @@ def _run_connectivity_analysis(
             wall_segments.append(seg)
             segment_parent.append(wall)
 
-    hosted_doors = _host_openings(
+    hosted_doors, unhostable_doors = _host_openings(
         session, doors, wall_segments, segment_parent
     )
-    hosted_windows = _host_openings(
+    hosted_windows, unhostable_windows = _host_openings(
         session, windows, wall_segments, segment_parent
     )
+    unhostable_openings = unhostable_doors + unhostable_windows
 
-    door_centers: list[connectivity.Point] = [
-        _opening_center(d) for d in doors
-    ]
+    # Room adjacency needs door centres too. Skip any door whose
+    # geometry didn't produce a computable centre — including it as
+    # (0, 0) would poison the adjacency graph the same way it poisoned
+    # hosting pre-fix.
+    door_centers: list[connectivity.Point] = []
+    for d in doors:
+        c = _opening_center(d)
+        if c is not None:
+            door_centers.append(c)
 
     # Derive rooms from the wall planar graph; persist each as a new
     # Element row tagged derived=True — unless an explicit A-ROOM
@@ -444,6 +452,7 @@ def _run_connectivity_analysis(
     return {
         "hosted_doors": hosted_doors,
         "hosted_windows": hosted_windows,
+        "unhostable_openings": unhostable_openings,
         "derived_rooms": inserted_derived,
         "confirmed_explicit_rooms": confirmed_explicit,
         "adjacencies": len(edges),
@@ -455,28 +464,55 @@ def _host_openings(
     openings: list[Element],
     wall_segments: list[tuple[tuple[float, float], tuple[float, float]]],
     segment_parent: list[Element],
-) -> int:
+) -> tuple[int, int]:
     """Write ``host_element_id`` on every opening that matches a wall.
 
     Same algorithm for doors and windows — the geometry doesn't know
-    the difference. Returns the count of successfully hosted rows.
+    the difference. Openings whose geometry can't produce a centre
+    (unknown ``kind``, missing vertices, malformed dict) are *not*
+    hosted at all rather than hosted-to-origin — a silently-wrong
+    result is worse than a visibly-unhosted one.
+
+    Returns ``(hosted_count, unhostable_count)``. The sum of these two
+    can be less than ``len(openings)``: openings with a valid centre
+    but no wall within ``max_distance`` are neither hosted nor
+    unhostable — they're legitimately free-floating.
     """
     from atlas_core import connectivity
 
     if not openings:
-        return 0
-    centers = [_opening_center(o) for o in openings]
-    hostings = connectivity.host_walls_for_openings(centers, wall_segments)
+        return 0, 0
+
+    # Build centres once; None means "can't compute one" — skip this
+    # opening's hosting entirely.
+    valid_openings: list[Element] = []
+    valid_centers: list[tuple[float, float]] = []
+    unhostable = 0
+    for o in openings:
+        c = _opening_center(o)
+        if c is None:
+            unhostable += 1
+            log.warning(
+                "extract.unhostable_opening",
+                element_id=str(o.id),
+                kind=o.kind,
+                geometry_kind=(o.geometry or {}).get("kind"),
+            )
+            continue
+        valid_openings.append(o)
+        valid_centers.append(c)
+
+    hostings = connectivity.host_walls_for_openings(valid_centers, wall_segments)
     hosted = 0
     for h in hostings:
         if h.wall_index is None:
             continue
-        openings[h.opening_index].host_element_id = (
+        valid_openings[h.opening_index].host_element_id = (
             segment_parent[h.wall_index].id
         )
-        session.add(openings[h.opening_index])
+        session.add(valid_openings[h.opening_index])
         hosted += 1
-    return hosted
+    return hosted, unhostable
 
 
 def _wall_segments(
@@ -527,21 +563,73 @@ def _explicit_polygon(room: Element) -> tuple[
     return ring, bbox
 
 
-def _opening_center(opening: Element) -> tuple[float, float]:
-    """Pull the geometric centre out of a door/window element.
+def _opening_center(opening: Element) -> tuple[float, float] | None:
+    """Compute the geometric centre of a door/window, dispatching by kind.
 
-    ARC and INSERT geometries both carry a ``center`` subobject; for
-    either kind the centre lies on (or very near) the host wall,
-    which is what the hosting algorithm cares about. On malformed
-    geometry we fall back to (0, 0) — the caller's ``max_distance``
-    threshold will then reject the match, leaving the element
-    un-hosted. Matches the pre-2.5 door-only behaviour.
+    Returns ``None`` when the geometry can't produce a meaningful
+    centre — explicitly chosen over the pre-fix ``(0, 0)`` fallback,
+    which silently misreported the centre of every centreless opening
+    as world origin. An opening near origin + a wall passing through
+    origin would then be falsely hosted on that wall. ``None`` makes
+    the caller skip hosting entirely, which is loud (shows up in the
+    ``unhostable_openings`` stat) rather than silently wrong.
+
+    Kind dispatch:
+
+    - ``insert`` / ``arc`` / ``circle`` → ``geometry.center`` (the
+      insertion point / arc centre / circle centre).
+    - ``polyline`` → mean of ``geometry.points``. For the common
+      2-point window-as-sill-line case this is the midpoint; for
+      multi-vertex polylines it's the centroid of the vertex
+      polygon, which is good enough for proximity matching.
+    - ``polygon`` → mean of ``geometry.ring``. Approximation of the
+      true area-weighted centroid; fine for an opening's host-
+      proximity check because openings are usually small.
+    - ``raw`` / unknown / missing → ``None``.
     """
     geom = opening.geometry or {}
-    c = geom.get("center")
-    if not c:
-        return (0.0, 0.0)
-    return (float(c["x"]), float(c["y"]))
+    kind = geom.get("kind")
+
+    if kind in ("insert", "arc", "circle"):
+        c = geom.get("center")
+        if not c or "x" not in c or "y" not in c:
+            return None
+        try:
+            return (float(c["x"]), float(c["y"]))
+        except (TypeError, ValueError):
+            return None
+
+    if kind == "polyline":
+        return _mean_point(geom.get("points") or [])
+
+    if kind == "polygon":
+        return _mean_point(geom.get("ring") or [])
+
+    # ``raw``, ``None``, or any future unrecognised kind.
+    return None
+
+
+def _mean_point(pts: list[dict]) -> tuple[float, float] | None:
+    """Arithmetic mean of an ``[{"x":, "y":}, ...]`` list.
+
+    Returns None on an empty list or unparseable entries — the
+    caller treats that as "no usable centre".
+    """
+    if not pts:
+        return None
+    sx = 0.0
+    sy = 0.0
+    n = 0
+    for p in pts:
+        try:
+            sx += float(p["x"])
+            sy += float(p["y"])
+            n += 1
+        except (KeyError, TypeError, ValueError):
+            continue
+    if n == 0:
+        return None
+    return (sx / n, sy / n)
 
 
 # ---------- RQ entrypoint ----------

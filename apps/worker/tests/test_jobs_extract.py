@@ -348,6 +348,113 @@ class TestWindowHosting:
         assert src.summary["connectivity"]["hosted_windows"] == 0
 
 
+# -------- _opening_center per-kind dispatch (correctness fix) --------
+
+
+def _elt(kind: str, geometry: dict) -> Element:
+    # Minimal in-memory Element for unit tests of _opening_center.
+    from uuid import uuid4 as _u4
+    return Element(
+        id=_u4(), sheet_id=_u4(), source_id=_u4(),
+        kind=kind, geometry=geometry, attrs={}, ifc_properties={},
+    )
+
+
+class TestOpeningCenter:
+    def test_insert_uses_center_field(self):
+        e = _elt("door", {"kind": "insert", "center": {"x": 5, "y": 7}})
+        assert extract._opening_center(e) == (5.0, 7.0)
+
+    def test_arc_uses_center_field(self):
+        e = _elt("door", {
+            "kind": "arc", "center": {"x": 3, "y": 6}, "radius": 1.0,
+            "start_angle_deg": 0.0, "end_angle_deg": 90.0,
+        })
+        assert extract._opening_center(e) == (3.0, 6.0)
+
+    def test_polyline_uses_mean_of_points(self):
+        e = _elt("window", {
+            "kind": "polyline",
+            "points": [{"x": 2, "y": 8}, {"x": 4, "y": 8}],
+        })
+        assert extract._opening_center(e) == (3.0, 8.0)
+
+    def test_polygon_uses_mean_of_ring(self):
+        e = _elt("window", {
+            "kind": "polygon",
+            "ring": [{"x": 0, "y": 0}, {"x": 2, "y": 0}, {"x": 1, "y": 2}],
+        })
+        assert extract._opening_center(e) == pytest.approx((1.0, 2 / 3))
+
+    def test_unknown_kind_returns_none(self):
+        e = _elt("door", {"kind": "raw", "entity_type": "HATCH"})
+        assert extract._opening_center(e) is None
+
+    def test_missing_geometry_returns_none(self):
+        e = _elt("door", {})
+        assert extract._opening_center(e) is None
+
+
+# -------- Pathological regression: (0,0) fallback bug --------
+
+
+def _polyline_window_near_north_dxf(path: Path) -> Path:
+    """10×10 room + polyline window near the north wall at (9, 9.95).
+
+    Pre-fix: ``_opening_center`` returned (0, 0), which sits AT
+    origin — 0 distance from both the south and west walls. The
+    window would be mis-hosted on whichever of those happened to
+    sort first. Post-fix: the polyline's mean point (9, 9.95) is
+    0.05 from the north wall, so the window hosts correctly.
+    """
+    doc = ezdxf.new(dxfversion="R2018")
+    for layer in ("A-WALL-EXTR", "A-WIND"):
+        doc.layers.add(layer)
+    msp = doc.modelspace()
+    for a, b in [
+        ((0, 0), (10, 0)),   # south
+        ((10, 0), (10, 10)), # east
+        ((10, 10), (0, 10)), # north
+        ((0, 10), (0, 0)),   # west
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+    msp.add_lwpolyline(
+        [(8.5, 9.95), (9.5, 9.95)],
+        close=False,
+        dxfattribs={"layer": "A-WIND"},
+    )
+    doc.saveas(str(path))
+    return path
+
+
+class TestOriginFallbackRegression:
+    def test_polyline_window_hosts_on_real_nearest_wall_not_origin(
+        self, db: Session, tmp_path: Path, captured_events
+    ):
+        d, _ = _make_drawing(db)
+        path = _polyline_window_near_north_dxf(tmp_path / "origin-bug.dxf")
+        summary = extract.extract_from_dxf(db, d.id, path)
+
+        window = (
+            db.query(Element)
+            .filter(
+                Element.source_id == summary.source_id,
+                Element.kind == "window",
+            )
+            .one()
+        )
+        assert window.host_element_id is not None
+        host = db.get(Element, window.host_element_id)
+        assert host is not None and host.kind == "wall"
+        # Correct host is the north wall — its polyline sits on y=10.
+        north_pts = host.geometry["points"]
+        assert {p["y"] for p in north_pts} == {10.0}
+
+        src = db.get(ElementSource, summary.source_id)
+        assert src.summary["connectivity"]["hosted_windows"] == 1
+        assert src.summary["connectivity"]["unhostable_openings"] == 0
+
+
 # -------- G-O1: explicit vs derived room dedup --------
 
 
