@@ -6,51 +6,73 @@ import pytest
 
 from atlas_core import connectivity as c
 
-# ---------- door-to-wall hosting ----------
+# ---------- opening-to-wall hosting (doors + windows) ----------
 
 
-class TestHostWallsForDoors:
-    def test_door_on_a_wall_segment(self):
-        # Door hinge sits exactly on a wall.
+class TestHostWallsForOpenings:
+    """Hosting is kind-agnostic — doors and windows take the same path.
+
+    We parameterize over the two kinds to prove it: the algorithm
+    doesn't care whether the point came from an arc centre or an
+    INSERT's insertion point.
+    """
+
+    @pytest.mark.parametrize("kind", ["door", "window"])
+    def test_opening_on_a_wall_segment(self, kind):
         walls = [((0.0, 0.0), (10.0, 0.0))]
-        doors = [(5.0, 0.0)]
-        results = c.host_walls_for_doors(doors, walls)
+        openings = [(5.0, 0.0)]
+        results = c.host_walls_for_openings(openings, walls)
         assert results[0].wall_index == 0
+        assert results[0].opening_index == 0
         assert results[0].distance == pytest.approx(0.0)
         assert results[0].parametric_position == pytest.approx(0.5)
 
-    def test_door_near_one_of_many_walls(self):
+    @pytest.mark.parametrize("kind", ["door", "window"])
+    def test_opening_near_one_of_many_walls(self, kind):
         walls = [
             ((0.0, 0.0), (10.0, 0.0)),   # bottom
             ((10.0, 0.0), (10.0, 10.0)), # right
             ((10.0, 10.0), (0.0, 10.0)), # top
             ((0.0, 10.0), (0.0, 0.0)),   # left
         ]
-        doors = [(7.0, 10.05)]  # near the top wall
-        results = c.host_walls_for_doors(doors, walls)
+        openings = [(7.0, 10.05)]  # near the top wall
+        results = c.host_walls_for_openings(openings, walls)
         assert results[0].wall_index == 2
 
-    def test_door_too_far_from_any_wall_unhosted(self):
+    def test_opening_too_far_from_any_wall_unhosted(self):
         walls = [((0.0, 0.0), (10.0, 0.0))]
-        doors = [(5.0, 5.0)]  # way off the wall
-        results = c.host_walls_for_doors(doors, walls, max_distance=0.5)
+        openings = [(5.0, 5.0)]
+        results = c.host_walls_for_openings(openings, walls, max_distance=0.5)
         assert results[0].wall_index is None
 
     def test_clamps_to_segment_endpoints(self):
-        # A point past the wall's endpoint shouldn't match it just because
-        # it's on the infinite line.
         walls = [((0.0, 0.0), (10.0, 0.0))]
-        doors = [(15.0, 0.0)]
-        results = c.host_walls_for_doors(doors, walls, max_distance=0.5)
+        openings = [(15.0, 0.0)]
+        results = c.host_walls_for_openings(openings, walls, max_distance=0.5)
         assert results[0].wall_index is None
         assert results[0].distance == pytest.approx(5.0)
 
-    def test_multiple_doors_each_get_own_result(self):
+    def test_multiple_openings_each_get_own_result(self):
         walls = [((0.0, 0.0), (10.0, 0.0)), ((0.0, 5.0), (10.0, 5.0))]
-        doors = [(2.0, 0.05), (8.0, 5.05)]
-        results = c.host_walls_for_doors(doors, walls)
+        openings = [(2.0, 0.05), (8.0, 5.05)]
+        results = c.host_walls_for_openings(openings, walls)
         assert results[0].wall_index == 0
         assert results[1].wall_index == 1
+        assert results[0].opening_index == 0
+        assert results[1].opening_index == 1
+
+    def test_window_insertion_point_on_north_wall_hosts(self):
+        # Real-world shape: apartment north wall + a window block's
+        # INSERT point sitting on it. The INSERT.center is what the
+        # orchestrator feeds here for windows; geometrically this is
+        # indistinguishable from a door's arc centre.
+        walls = [((0.0, 12.0), (18.0, 12.0))]
+        windows = [(3.0, 12.0), (15.0, 12.0)]
+        results = c.host_walls_for_openings(windows, walls)
+        for r in results:
+            assert r.wall_index == 0
+        assert results[0].parametric_position == pytest.approx(3.0 / 18.0)
+        assert results[1].parametric_position == pytest.approx(15.0 / 18.0)
 
 
 # ---------- wall splitting at intersections ----------
@@ -340,7 +362,7 @@ class TestEndToEnd:
         # Hosting — the y=5 horizontal wall hosts both interior doors.
         # NOTE: post-split the horizontal wall is two segments; we still
         # report the original input wall index for hosting.
-        hosting = c.host_walls_for_doors(doors, walls)
+        hosting = c.host_walls_for_openings(doors, walls)
         # Both should host on wall index 4 (the y=5 line in the input list).
         assert hosting[0].wall_index == 4
         assert hosting[1].wall_index == 4

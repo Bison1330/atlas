@@ -9,9 +9,10 @@ This module is the pure-geometry layer: no FastAPI, no DB, no React.
 A sheet goes in, a JSON-serialisable Pydantic model comes out.
 
 Hosting is not re-derived here. By the time a ``StructuredSheet``
-reaches us, ``connectivity.host_walls_for_doors`` has already run
-upstream and its verdict lives on ``Door.host_wall_id``. We only
-need to decide *where along* that wall the opening sits — and even
+reaches us, ``connectivity.host_walls_for_openings`` has already
+run upstream — once for doors, once for windows — and its verdict
+lives on ``Door.host_wall_id`` / ``Window.host_wall_id``. We only
+need to decide *where along* that wall the opening sits, and even
 that can be short-circuited by an extractor-supplied
 ``properties["parametric_position"]``.
 """

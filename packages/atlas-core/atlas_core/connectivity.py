@@ -2,10 +2,12 @@
 
 Three concerns, in strict dependency order:
 
-1. **Door-to-wall hosting** — for each door arc, identify the wall
-   it sits in. Geometric: nearest wall to the arc's hinge point,
-   within a tolerance. Outputs a host wall index + parametric
-   position along that wall.
+1. **Opening-to-wall hosting** — for each opening (door arc or
+   window block/polyline), identify the wall it sits in. Geometric:
+   nearest wall to the opening's centre, within a tolerance. Outputs
+   a host wall index + parametric position along that wall. Doors and
+   windows share this path; the orchestrator calls it once for each
+   kind.
 
 2. **Room derivation** — find the planar faces of the wall graph.
    Walls are split at every intersection so T-junctions become
@@ -42,45 +44,53 @@ Segment = tuple[Point, Point]
 
 
 # ---------------------------------------------------------------------------
-# Door-to-wall hosting
+# Opening-to-wall hosting (doors + windows)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
 class HostingResult:
-    """Outcome for one door.
+    """Outcome for one opening (door or window).
 
     ``wall_index`` is None when no wall is within ``max_distance``;
-    callers should treat the door as un-hosted (likely a free-floating
-    annotation arc that only happened to land on A-DOOR).
+    callers should treat the opening as un-hosted (likely a free-
+    floating annotation arc or block that only happened to land on a
+    door/window layer).
     """
 
-    door_index: int
+    opening_index: int
     wall_index: int | None
     distance: float | None
     parametric_position: float | None  # 0..1 along the wall
 
 
-def host_walls_for_doors(
-    doors: list[Point],
+def host_walls_for_openings(
+    openings: list[Point],
     walls: list[Segment],
     *,
     max_distance: float = 0.5,
 ) -> list[HostingResult]:
-    """Match each door to its nearest wall within ``max_distance``.
+    """Match each opening (door or window) to its nearest wall within
+    ``max_distance``.
 
-    Distance is point-to-segment (clamped at endpoints), so a door
-    that lies on a wall's *extension* but past either endpoint won't
-    be matched — that's intentional: the hinge has to actually sit
-    on the wall, not near where the wall would be if it kept going.
+    Distance is point-to-segment (clamped at endpoints), so an opening
+    that lies on a wall's *extension* past either endpoint won't be
+    matched — that's intentional: the hinge (for a door) or centre
+    (for a window) has to actually sit on the wall, not near where the
+    wall would be if it kept going.
+
+    The function is geometrically kind-agnostic — callers pass door
+    arc centres or window insertion points interchangeably. Wiring
+    them up as ``host_element_id`` on the corresponding element rows
+    is the orchestrator's job.
     """
     results: list[HostingResult] = []
-    for di, door in enumerate(doors):
+    for oi, opening in enumerate(openings):
         best_wi: int | None = None
         best_dist = float("inf")
         best_t: float | None = None
         for wi, wall in enumerate(walls):
-            d, t = _point_to_segment_distance(door, wall)
+            d, t = _point_to_segment_distance(opening, wall)
             if d < best_dist:
                 best_dist = d
                 best_wi = wi
@@ -88,7 +98,7 @@ def host_walls_for_doors(
         if best_wi is not None and best_dist <= max_distance:
             results.append(
                 HostingResult(
-                    door_index=di,
+                    opening_index=oi,
                     wall_index=best_wi,
                     distance=best_dist,
                     parametric_position=best_t,
@@ -97,7 +107,7 @@ def host_walls_for_doors(
         else:
             results.append(
                 HostingResult(
-                    door_index=di,
+                    opening_index=oi,
                     wall_index=None,
                     distance=best_dist if best_dist != float("inf") else None,
                     parametric_position=None,

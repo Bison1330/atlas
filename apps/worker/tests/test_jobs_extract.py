@@ -237,6 +237,117 @@ class TestMultiSegmentWallHosting:
         assert south_pts[-1] == {"x": 10.0, "y": 0.0}
 
 
+# -------- session 2.5: window hosting parity with doors --------
+
+
+def _floor_with_window_dxf(path: Path) -> Path:
+    """4 walls + 1 ARC door on the south wall + 1 INSERT window on the
+    north wall. Exercises the window-hosting path alongside the
+    existing door-hosting path.
+    """
+    doc = ezdxf.new(dxfversion="R2018")
+    for layer in ("A-WALL-EXTR", "A-DOOR", "A-WIND"):
+        doc.layers.add(layer)
+    win_block = "ATLAS_WINDOW_DOUBLE_TEST"
+    blk = doc.blocks.new(name=win_block)
+    blk.add_line((0, 0), (2, 0))
+    blk.add_line((0, 0.1), (2, 0.1))
+    msp = doc.modelspace()
+    for a, b in [
+        ((0, 0), (10, 0)),   # south
+        ((10, 0), (10, 8)),  # east
+        ((10, 8), (0, 8)),   # north
+        ((0, 8), (0, 0)),    # west
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+    msp.add_arc(
+        center=(3, 0), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+    # Window INSERT on the north wall at x=6.
+    msp.add_blockref(
+        win_block, insert=(6, 8), dxfattribs={"layer": "A-WIND"}
+    )
+    doc.saveas(str(path))
+    return path
+
+
+class TestWindowHosting:
+    def test_window_gets_host_element_id_after_extraction(
+        self, db: Session, tmp_path: Path, captured_events
+    ):
+        d, _ = _make_drawing(db)
+        path = _floor_with_window_dxf(tmp_path / "with-window.dxf")
+        summary = extract.extract_from_dxf(db, d.id, path)
+
+        elements = (
+            db.query(Element)
+            .filter(Element.source_id == summary.source_id)
+            .all()
+        )
+        window = next(e for e in elements if e.kind == "window")
+        assert window.host_element_id is not None
+        host = db.get(Element, window.host_element_id)
+        assert host is not None and host.kind == "wall"
+        # The INSERT point is (6, 8) — north wall runs (10,8) → (0,8).
+        north_pts = host.geometry["points"]
+        ys = {p["y"] for p in north_pts}
+        assert ys == {8.0}
+
+    def test_source_summary_records_hosted_windows_count(
+        self, db: Session, tmp_path: Path, captured_events
+    ):
+        d, _ = _make_drawing(db)
+        path = _floor_with_window_dxf(tmp_path / "with-window.dxf")
+        summary = extract.extract_from_dxf(db, d.id, path)
+
+        src = db.get(ElementSource, summary.source_id)
+        assert src is not None
+        connectivity = src.summary["connectivity"]
+        assert connectivity["hosted_doors"] == 1
+        assert connectivity["hosted_windows"] == 1
+
+    def test_window_far_from_walls_stays_unhosted(
+        self, db: Session, tmp_path: Path, captured_events
+    ):
+        # A window INSERT dropped in empty space (nowhere near any wall)
+        # must not get a bogus host_element_id.
+        doc = ezdxf.new(dxfversion="R2018")
+        for layer in ("A-WALL-EXTR", "A-WIND"):
+            doc.layers.add(layer)
+        win_block = "ATLAS_STRAY_WIN"
+        blk = doc.blocks.new(name=win_block)
+        blk.add_line((0, 0), (2, 0))
+        msp = doc.modelspace()
+        for a, b in [
+            ((0, 0), (10, 0)),
+            ((10, 0), (10, 8)),
+            ((10, 8), (0, 8)),
+            ((0, 8), (0, 0)),
+        ]:
+            msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+        # Window at (100, 100) — over 90 units from any wall.
+        msp.add_blockref(
+            win_block, insert=(100, 100), dxfattribs={"layer": "A-WIND"}
+        )
+        path = tmp_path / "stray-window.dxf"
+        doc.saveas(str(path))
+
+        d, _ = _make_drawing(db)
+        summary = extract.extract_from_dxf(db, d.id, path)
+        window = (
+            db.query(Element)
+            .filter(
+                Element.source_id == summary.source_id,
+                Element.kind == "window",
+            )
+            .one()
+        )
+        assert window.host_element_id is None
+        src = db.get(ElementSource, summary.source_id)
+        assert src.summary["connectivity"]["hosted_windows"] == 0
+
+
 # -------- G-O1: explicit vs derived room dedup --------
 
 

@@ -171,7 +171,7 @@ def run_extraction(dxf_path: Path) -> dict[str, Any]:
     ]
     confirmed_explicit = sum(1 for m in matches if m is not None)
 
-    hosting = connectivity.host_walls_for_doors(door_centers, wall_segments)
+    hosting = connectivity.host_walls_for_openings(door_centers, wall_segments)
     # Adjacency walks rings of the rooms you pass, so run it on the
     # post-dedup list — that's what the DB will record too.
     adjacencies = connectivity.room_adjacency_via_doors(

@@ -323,14 +323,17 @@ class TestRealExtraction:
 
         # 13 wall polylines → each becomes 1+ WallMesh segments.
         assert stats["wall_count"] >= 13
-        # 3 doors, 2 windows — each placed as a void (with matching opening record).
-        assert stats["opening_count"] >= 3
+        # 3 doors + 2 windows, all now hosted after session-2.5 parity
+        # fix → 5 opening records in the scene.
+        assert stats["opening_count"] >= 5
         # 6 derived rooms → 6 floor slabs.
         assert stats["floor_count"] >= 6
-        # The INSERT door at (15, 6) and both INSERT windows have no
-        # extractor bbox, so synthesis must fire ≥ 1 time (we check >=1
-        # rather than ==3 so the test survives a future extractor fix).
-        assert stats["synthesized_insert_bbox"] >= 1
+        # 1 INSERT door + 2 INSERT windows all need synthesized bboxes
+        # (ezdxf reports an insertion point but not the block's extents).
+        # We check >=3 rather than ==3 so a future extractor fix that
+        # starts computing real INSERT extents relaxes this number
+        # without breaking the test.
+        assert stats["synthesized_insert_bbox"] >= 3
         assert stats["dropped_elements"] == 0
         # Boolean cuts all succeeded.
         assert stats["failed_opening_count"] == 0

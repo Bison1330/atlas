@@ -309,13 +309,16 @@ def _run_connectivity_analysis(
     source_id: UUID,
     sheet_id: UUID,
 ) -> dict[str, int]:
-    """Compute door hosting + derive rooms from wall loops.
+    """Compute opening hosting + derive rooms from wall loops.
 
     Operates on the elements just written by the orchestrator. Three
     side effects:
 
-    1. ``Element.host_element_id`` set on every door whose hinge sits
-       on a wall (within tolerance).
+    1. ``Element.host_element_id`` set on every door and window whose
+       centre sits on a wall (within tolerance). Doors and windows go
+       through the same geometric path — a window's insertion point
+       is indistinguishable from a door's arc centre to the hosting
+       algorithm.
     2. New ``Element`` rows inserted for each derived room (CCW
        interior face of the wall planar graph), tagged
        ``attrs.derived = True`` so downstream code can distinguish
@@ -339,9 +342,19 @@ def _run_connectivity_analysis(
         .filter(Element.source_id == source_id, Element.kind == "door")
         .all()
     )
+    windows = (
+        session.query(Element)
+        .filter(Element.source_id == source_id, Element.kind == "window")
+        .all()
+    )
 
     if not walls:
-        return {"hosted_doors": 0, "derived_rooms": 0, "adjacencies": 0}
+        return {
+            "hosted_doors": 0,
+            "hosted_windows": 0,
+            "derived_rooms": 0,
+            "adjacencies": 0,
+        }
 
     # Marshal ORM rows into the algorithm's bare-tuple shapes. Walls
     # drawn as multi-vertex LWPOLYLINEs (L-shaped partitions, curved
@@ -356,19 +369,16 @@ def _run_connectivity_analysis(
             wall_segments.append(seg)
             segment_parent.append(wall)
 
-    door_centers: list[connectivity.Point] = [
-        _door_center(d) for d in doors
-    ]
+    hosted_doors = _host_openings(
+        session, doors, wall_segments, segment_parent
+    )
+    hosted_windows = _host_openings(
+        session, windows, wall_segments, segment_parent
+    )
 
-    # Hosting — set host_element_id on each door whose hinge is on a wall.
-    hostings = connectivity.host_walls_for_doors(door_centers, wall_segments)
-    hosted = 0
-    for h in hostings:
-        if h.wall_index is None:
-            continue
-        doors[h.door_index].host_element_id = segment_parent[h.wall_index].id
-        session.add(doors[h.door_index])
-        hosted += 1
+    door_centers: list[connectivity.Point] = [
+        _opening_center(d) for d in doors
+    ]
 
     # Derive rooms from the wall planar graph; persist each as a new
     # Element row tagged derived=True — unless an explicit A-ROOM
@@ -432,11 +442,41 @@ def _run_connectivity_analysis(
     edges = connectivity.room_adjacency_via_doors(derived, door_centers)
 
     return {
-        "hosted_doors": hosted,
+        "hosted_doors": hosted_doors,
+        "hosted_windows": hosted_windows,
         "derived_rooms": inserted_derived,
         "confirmed_explicit_rooms": confirmed_explicit,
         "adjacencies": len(edges),
     }
+
+
+def _host_openings(
+    session: Session,
+    openings: list[Element],
+    wall_segments: list[tuple[tuple[float, float], tuple[float, float]]],
+    segment_parent: list[Element],
+) -> int:
+    """Write ``host_element_id`` on every opening that matches a wall.
+
+    Same algorithm for doors and windows — the geometry doesn't know
+    the difference. Returns the count of successfully hosted rows.
+    """
+    from atlas_core import connectivity
+
+    if not openings:
+        return 0
+    centers = [_opening_center(o) for o in openings]
+    hostings = connectivity.host_walls_for_openings(centers, wall_segments)
+    hosted = 0
+    for h in hostings:
+        if h.wall_index is None:
+            continue
+        openings[h.opening_index].host_element_id = (
+            segment_parent[h.wall_index].id
+        )
+        session.add(openings[h.opening_index])
+        hosted += 1
+    return hosted
 
 
 def _wall_segments(
@@ -487,9 +527,17 @@ def _explicit_polygon(room: Element) -> tuple[
     return ring, bbox
 
 
-def _door_center(door: Element) -> tuple[float, float]:
-    """Pull the arc center out of a door's geometry; (0,0) on garbage."""
-    geom = door.geometry or {}
+def _opening_center(opening: Element) -> tuple[float, float]:
+    """Pull the geometric centre out of a door/window element.
+
+    ARC and INSERT geometries both carry a ``center`` subobject; for
+    either kind the centre lies on (or very near) the host wall,
+    which is what the hosting algorithm cares about. On malformed
+    geometry we fall back to (0, 0) — the caller's ``max_distance``
+    threshold will then reject the match, leaving the element
+    un-hosted. Matches the pre-2.5 door-only behaviour.
+    """
+    geom = opening.geometry or {}
     c = geom.get("center")
     if not c:
         return (0.0, 0.0)
