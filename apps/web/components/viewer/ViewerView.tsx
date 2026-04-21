@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { DrawingSummary } from "@/lib/api";
+import { Model3DCanvas } from "./Model3DCanvas";
 import { SheetCanvas } from "./SheetCanvas";
 import { SheetSwitcher } from "./SheetSwitcher";
 
@@ -9,17 +10,21 @@ interface Props {
   drawing: DrawingSummary;
 }
 
+type ViewMode = "2d" | "3d";
+
 /**
  * Multi-sheet viewer surface.
  *
  * Keyboard shortcuts intentionally mirror the bare minimum a power
  * user expects on day one — left/right to flip pages, "1" to jump
- * to the first page. We deliberately do *not* swallow input that
- * any normal text field would handle.
+ * to the first page, "v" to toggle the 2D ↔ 3D canvas. We
+ * deliberately do *not* swallow input that any normal text field
+ * would handle.
  */
 export function ViewerView({ drawing }: Props) {
   const sheets = drawing.sheets;
   const [activeId, setActiveId] = useState<string | null>(sheets[0]?.id ?? null);
+  const [mode, setMode] = useState<ViewMode>("2d");
   const active = sheets.find((s) => s.id === activeId) ?? sheets[0] ?? null;
 
   const goto = useCallback(
@@ -43,6 +48,9 @@ export function ViewerView({ drawing }: Props) {
       if (e.key === "ArrowRight" || e.key === "j") goto(+1);
       else if (e.key === "ArrowLeft" || e.key === "k") goto(-1);
       else if (e.key === "1" && sheets[0]) setActiveId(sheets[0].id);
+      else if (e.key === "v" || e.key === "V") {
+        setMode((prev) => (prev === "2d" ? "3d" : "2d"));
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -67,9 +75,29 @@ export function ViewerView({ drawing }: Props) {
             {active.title ?? `Page ${active.page_number}`}
           </h2>
         </div>
-        <p className="font-mono text-[11px] text-text-muted">
-          {active.width_px}×{active.height_px}px · {active.dpi} DPI · zoom 0–{active.max_zoom}
-        </p>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface p-0.5">
+            {(["2d", "3d"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                className={[
+                  "rounded-md px-3 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors",
+                  mode === m
+                    ? "bg-accent/15 text-accent shadow-glow"
+                    : "text-text-muted hover:text-text-secondary",
+                ].join(" ")}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <p className="font-mono text-[11px] text-text-muted">
+            {active.width_px}×{active.height_px}px · {active.dpi} DPI · zoom 0–{active.max_zoom}
+          </p>
+        </div>
       </div>
 
       <SheetSwitcher
@@ -80,11 +108,17 @@ export function ViewerView({ drawing }: Props) {
       />
 
       <div className="h-[70vh] min-h-[480px]">
-        <SheetCanvas drawingId={drawing.id} sheet={active} />
+        {mode === "2d" ? (
+          <SheetCanvas drawingId={drawing.id} sheet={active} />
+        ) : (
+          <Model3DCanvas drawingId={drawing.id} sheet={active} />
+        )}
       </div>
 
       <p className="text-xs text-text-muted">
-        Pan with click-drag · pinch or scroll to zoom · ←/→ to flip pages
+        {mode === "2d"
+          ? "Pan with click-drag · pinch or scroll to zoom · ←/→ to flip pages · V to toggle 3D"
+          : "Drag to orbit · scroll to zoom · pitch down for floor plan · R to reset · V to toggle 2D"}
       </p>
     </div>
   );

@@ -3,6 +3,7 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY apps/web/package.json ./package.json
+COPY apps/web/.npmrc ./.npmrc
 RUN npm install --no-audit --no-fund
 
 FROM node:20-alpine AS builder
