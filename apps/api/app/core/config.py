@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     register_max_attempts: int = 3
     register_window_seconds: int = 60 * 60
 
+    # Demo-login tunables. Shorter TTL than ``session_ttl_seconds``
+    # so demo sessions don't linger at the multi-day default; the
+    # rate limit keeps a single IP from hammering the endpoint.
+    demo_session_ttl_seconds: int = 24 * 60 * 60
+    demo_login_max_per_hour: int = 60
+    demo_login_window_seconds: int = 60 * 60
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

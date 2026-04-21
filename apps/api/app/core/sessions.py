@@ -82,12 +82,20 @@ class SessionRecord:
     only — we *don't* invalidate the session on IP/UA change (too
     many false positives for users on mobile networks). A future
     account-activity page can surface these.
+
+    ``ttl_seconds`` is the TTL this specific session was created
+    with. Stored so :func:`touch_session` can re-apply the same
+    value on sliding bumps — otherwise a short demo session would
+    silently extend back to the regular session TTL on its first
+    authenticated request. Legacy records (no field) fall back to
+    ``settings.session_ttl_seconds``.
     """
 
     user_id: UUID
     created_at: datetime
     ip_seen: str | None
     ua_seen: str | None
+    ttl_seconds: int | None = None
 
 
 def _encode(record: SessionRecord) -> str:
@@ -96,6 +104,7 @@ def _encode(record: SessionRecord) -> str:
         "created_at": record.created_at.isoformat(),
         "ip_seen": record.ip_seen,
         "ua_seen": record.ua_seen,
+        "ttl_seconds": record.ttl_seconds,
     })
 
 
@@ -107,6 +116,7 @@ def _decode(raw: bytes | str) -> SessionRecord | None:
             created_at=datetime.fromisoformat(data["created_at"]),
             ip_seen=data.get("ip_seen"),
             ua_seen=data.get("ua_seen"),
+            ttl_seconds=data.get("ttl_seconds"),
         )
     except Exception:
         return None
@@ -117,29 +127,74 @@ def _decode(raw: bytes | str) -> SessionRecord | None:
 # ---------------------------------------------------------------------------
 
 
-def create_session(
-    *, user_id: UUID, ip: str | None, user_agent: str | None,
+def _create_session_with_ttl(
+    *,
+    user_id: UUID,
+    ip: str | None,
+    user_agent: str | None,
+    ttl_seconds: int,
 ) -> str:
-    """Create a new session and return the signed cookie value.
+    """Private helper — the two public constructors wrap this.
 
-    The Redis entry is keyed by the raw session ID; the cookie
-    value is that ID signed with a timestamp. Clients never see the
-    raw ID on its own.
+    Kept separate so :func:`create_session` and
+    :func:`create_demo_session` stay single-purpose: callers can't
+    accidentally pass a short demo TTL to the regular login flow by
+    supplying a wrong keyword argument, because there is no such
+    argument to pass.
     """
-    settings = get_settings()
     raw_id = secrets.token_urlsafe(32)
     record = SessionRecord(
         user_id=user_id,
         created_at=datetime.now(UTC),
         ip_seen=ip,
         ua_seen=user_agent,
+        ttl_seconds=ttl_seconds,
     )
     get_redis().setex(
         _SESSION_KEY_PREFIX + raw_id,
-        settings.session_ttl_seconds,
+        ttl_seconds,
         _encode(record),
     )
     return _get_signer().sign(raw_id).decode("utf-8")
+
+
+def create_session(
+    *, user_id: UUID, ip: str | None, user_agent: str | None,
+) -> str:
+    """Create a new session for a fully-authenticated real user.
+
+    Uses ``settings.session_ttl_seconds`` — the standard multi-day
+    sliding TTL. For the shared demo account use
+    :func:`create_demo_session` instead; the two are deliberately
+    separate so the shorter demo TTL can't leak into the regular
+    login path.
+    """
+    return _create_session_with_ttl(
+        user_id=user_id,
+        ip=ip,
+        user_agent=user_agent,
+        ttl_seconds=get_settings().session_ttl_seconds,
+    )
+
+
+def create_demo_session(
+    *, user_id: UUID, ip: str | None, user_agent: str | None,
+) -> str:
+    """Create a new session for the shared demo account.
+
+    Uses ``settings.demo_session_ttl_seconds`` (24 h by default)
+    instead of the standard session TTL. The per-session TTL is
+    stored on the :class:`SessionRecord` so that sliding bumps via
+    :func:`touch_session` re-apply the same short TTL — otherwise
+    the first authenticated request after demo-login would extend
+    the session back to the multi-day default.
+    """
+    return _create_session_with_ttl(
+        user_id=user_id,
+        ip=ip,
+        user_agent=user_agent,
+        ttl_seconds=get_settings().demo_session_ttl_seconds,
+    )
 
 
 def read_session(signed_cookie_value: str) -> tuple[str, SessionRecord] | None:
@@ -175,9 +230,22 @@ def read_session(signed_cookie_value: str) -> tuple[str, SessionRecord] | None:
 
 
 def touch_session(raw_id: str) -> None:
-    """Sliding-TTL bump — call on every authenticated request."""
+    """Sliding-TTL bump — call on every authenticated request.
+
+    Reads the per-session TTL stamped on the record at creation
+    time so a demo session keeps its short TTL on every bump.
+    Legacy records without the field fall back to the global
+    default.
+    """
     settings = get_settings()
-    get_redis().expire(_SESSION_KEY_PREFIX + raw_id, settings.session_ttl_seconds)
+    ttl_seconds: int | None = None
+    raw = get_redis().get(_SESSION_KEY_PREFIX + raw_id)
+    if raw is not None:
+        record = _decode(raw)
+        if record is not None and record.ttl_seconds is not None:
+            ttl_seconds = record.ttl_seconds
+    effective_ttl = ttl_seconds if ttl_seconds is not None else settings.session_ttl_seconds
+    get_redis().expire(_SESSION_KEY_PREFIX + raw_id, effective_ttl)
 
 
 def destroy_session(raw_id: str) -> None:

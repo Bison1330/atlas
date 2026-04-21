@@ -30,6 +30,7 @@ def _envelope(
     message: str,
     status_code: int,
     details: dict | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body = ErrorResponse(
         error=ErrorBody(
@@ -39,7 +40,11 @@ def _envelope(
             request_id=_request_id(),
         )
     )
-    return JSONResponse(status_code=status_code, content=jsonable_encoder(body))
+    return JSONResponse(
+        status_code=status_code,
+        content=jsonable_encoder(body),
+        headers=headers,
+    )
 
 
 async def api_error_handler(_: Request, exc: APIError) -> JSONResponse:
@@ -49,6 +54,7 @@ async def api_error_handler(_: Request, exc: APIError) -> JSONResponse:
         message=exc.message,
         status_code=exc.status_code,
         details=exc.details,
+        headers=exc.headers,
     )
 
 

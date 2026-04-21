@@ -26,12 +26,14 @@ the window resets.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+import logging
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_dep import current_user
@@ -39,6 +41,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.rate_limit import check_and_increment, reset
 from app.core.sessions import (
+    create_demo_session,
     create_session,
     destroy_session,
     generate_csrf_token,
@@ -47,6 +50,19 @@ from app.core.sessions import (
 from app.db import Drawing, User
 from app.schemas.errors import APIError
 from app.services import auth as auth_svc
+
+log = logging.getLogger("atlas.api.auth")
+
+# Hardcoded allow-list of email addresses permitted to use the
+# ``/auth/demo-login`` bypass. This is intentionally *not* read from
+# the DB: even if a malicious actor manages to flip ``is_demo=true``
+# on another account, the email check here still has to match for
+# the endpoint to grant a session. Belt-and-suspenders.
+#
+# The TTL / rate-limit numerics intentionally live in ``Settings``
+# (see ``config.py``) so ops can tune them without a code change;
+# only the allow-list stays in code.
+DEMO_LOGIN_ALLOWED_EMAILS: frozenset[str] = frozenset({"demo@atlas.build"})
 
 auth_router = APIRouter(prefix="/auth", tags=["auth"])
 drawing_claim_router = APIRouter(prefix="/drawings", tags=["auth"])
@@ -80,6 +96,7 @@ class UserOut(BaseModel):
     email_verified: bool
     display_name: str | None = None
     is_active: bool
+    is_demo: bool = False
     last_login_at: datetime | None = None
 
 
@@ -95,13 +112,22 @@ class DrawingClaimOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _set_session_cookies(response: Response, *, signed_session: str, csrf: str) -> None:
+def _set_session_cookies(
+    response: Response,
+    *,
+    signed_session: str,
+    csrf: str,
+    max_age_seconds: int | None = None,
+) -> None:
     settings = get_settings()
     secure = settings.is_production
+    effective_max_age = (
+        max_age_seconds if max_age_seconds is not None else settings.session_ttl_seconds
+    )
     response.set_cookie(
         key=settings.session_cookie_name,
         value=signed_session,
-        max_age=settings.session_ttl_seconds,
+        max_age=effective_max_age,
         httponly=True,
         secure=secure,
         samesite="lax",
@@ -114,7 +140,7 @@ def _set_session_cookies(response: Response, *, signed_session: str, csrf: str) 
     response.set_cookie(
         key=settings.csrf_cookie_name,
         value=csrf,
-        max_age=settings.session_ttl_seconds,
+        max_age=effective_max_age,
         httponly=False,
         secure=secure,
         samesite="lax",
@@ -248,6 +274,142 @@ def login(
     )
     _set_session_cookies(
         response, signed_session=signed, csrf=generate_csrf_token(),
+    )
+    return UserOut.model_validate(user)
+
+
+@auth_router.post(
+    "/demo-login",
+    response_model=UserOut,
+    summary="Start a session for the shared demo account (no password).",
+)
+def demo_login(
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)] = None,  # type: ignore[assignment]
+) -> UserOut:
+    """One-click sign-in for the shared demo/prospect account.
+
+    **Authorization is deliberately layered** — any one of these
+    checks failing is a 403 with error code
+    ``demo_login_not_available``:
+
+    1. Rate limit: ``demo_login_max_per_hour`` per IP.
+    2. The target user row must have ``is_demo=True``.
+    3. The target user's email must appear in the hardcoded
+       :data:`DEMO_LOGIN_ALLOWED_EMAILS` set in this module.
+    4. The account must be ``is_active``.
+
+    The request body is intentionally ignored: there's no user-
+    supplied field (body / query / header) the caller could tamper
+    with to widen the blast radius to another account.
+
+    Session TTL is capped at ``demo_session_ttl_seconds`` so demo
+    sessions don't linger at the normal multi-day length.
+
+    Every attempt logs one ``auth.demo_login`` INFO event with an
+    ``outcome`` field (``success`` / ``forbidden`` / ``rate_limited``)
+    so production logs can show demo usage and abuse at a glance.
+    The session token is never logged.
+    """
+    settings = get_settings()
+    ip = _client_ip(request)
+    user_agent = request.headers.get("user-agent")
+
+    current, limit, retry_after = check_and_increment(
+        scope="auth:demo_login",
+        identifier=ip or "-",
+        limit=settings.demo_login_max_per_hour,
+        window_seconds=settings.demo_login_window_seconds,
+    )
+    if current > limit:
+        log.info(
+            "auth.demo_login",
+            extra={
+                "outcome": "rate_limited",
+                "ip": ip,
+                "user_agent": user_agent,
+                "retry_after_seconds": retry_after,
+            },
+        )
+        # ``Retry-After`` MUST travel on the 429 response itself.
+        # Setting ``response.headers[...]`` here is a no-op — the
+        # global ``APIError`` handler builds its own ``JSONResponse``
+        # and only the headers passed through the exception survive.
+        raise APIError(
+            code="rate_limited",
+            message="Too many demo login attempts. Try again later.",
+            status_code=429,
+            details={"retry_after_seconds": retry_after},
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    # Resolve the single allow-listed demo user. The loop is a no-op
+    # for now (single email) but keeps the structure correct if we
+    # ever add a second demo account.
+    user: User | None = None
+    for email in DEMO_LOGIN_ALLOWED_EMAILS:
+        candidate = db.execute(
+            select(User).where(User.email == email)
+        ).scalar_one_or_none()
+        if candidate is not None:
+            user = candidate
+            break
+
+    # Uniform 403 for missing user / flag flipped / deactivated /
+    # email off-list — don't leak which of the four failed.
+    denied_reason: str | None = None
+    if user is None:
+        denied_reason = "no_user"
+    elif not user.is_demo:
+        denied_reason = "not_demo"
+    elif not user.is_active:
+        denied_reason = "inactive"
+    elif user.email not in DEMO_LOGIN_ALLOWED_EMAILS:
+        denied_reason = "email_off_list"
+
+    if denied_reason is not None:
+        log.info(
+            "auth.demo_login",
+            extra={
+                "outcome": "forbidden",
+                "reason": denied_reason,
+                "ip": ip,
+                "user_agent": user_agent,
+            },
+        )
+        raise APIError(
+            code="demo_login_not_available",
+            message="Demo access is not available.",
+            status_code=403,
+        )
+
+    assert user is not None  # narrowed by denied_reason above
+
+    user.last_login_at = datetime.now(UTC)
+    db.add(user)
+    db.commit()
+
+    signed = create_demo_session(
+        user_id=user.id,
+        ip=ip,
+        user_agent=user_agent,
+    )
+    _set_session_cookies(
+        response,
+        signed_session=signed,
+        csrf=generate_csrf_token(),
+        max_age_seconds=settings.demo_session_ttl_seconds,
+    )
+    log.info(
+        "auth.demo_login",
+        extra={
+            "outcome": "success",
+            "ip": ip,
+            "user_agent": user_agent,
+            "user_id": str(user.id),
+            "email": user.email,
+        },
     )
     return UserOut.model_validate(user)
 

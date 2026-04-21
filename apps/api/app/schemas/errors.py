@@ -40,6 +40,12 @@ class APIError(Exception):
 
     Raise this from services and routes instead of ``HTTPException`` when
     you want the envelope applied automatically by the global handler.
+
+    ``headers`` is an optional dict of response headers the handler
+    applies to the error response. Needed for 429 responses that must
+    carry ``Retry-After`` — setting ``response.headers[...]`` at the
+    route level doesn't work because the handler builds its own
+    ``JSONResponse``.
     """
 
     def __init__(
@@ -49,12 +55,14 @@ class APIError(Exception):
         message: str,
         status_code: int = 400,
         details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
         self.details = details
+        self.headers = headers
 
 
 class NotFoundError(APIError):
