@@ -1,13 +1,20 @@
 """Shared fixtures for API tests.
 
-- ``engine`` is a session-scoped real Postgres connection. If unreachable,
-  every DB-dependent test is skipped (not failed).
+- ``engine`` is a session-scoped real Postgres connection targeting
+  ``TEST_DATABASE_URL`` (required; there is no fallback to the live
+  ``DATABASE_URL``). The test session refuses to start if the env is
+  misconfigured — see :mod:`harness_safety`.
 - ``_app_db_override`` is autouse so FastAPI's ``get_db`` dep and the
   WebSocket endpoint's direct session factory both point at the test
   engine. Route tests that don't insert their own rows still get DB
   access via this override.
 - ``db`` yields a session for the test to insert/read rows directly
-  and truncates after each test for isolation.
+  and clears non-sentinel state after each test for isolation.
+
+**Safety invariant:** the test-harness sentinel row in ``users``
+(email ``test-harness-sentinel@atlas.test``, inserted by
+``scripts/init_test_db.py``) must never be truncated. The ``db``
+fixture's teardown deletes every user *except* the sentinel.
 
 **M7 note:** ``_auto_auth`` autouses the ``current_user`` FastAPI
 dependency with a fixed test user (:data:`TEST_USER_ID`). This
@@ -23,7 +30,9 @@ bypass the override.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -31,34 +40,44 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core import db as core_db
-from app.core.auth_dep import current_user, require_csrf
-from app.core.db import get_db
-from app.core import redis as redis_mod  # noqa: F401  (side-effect: force module load before tests)
-from app.db import Base, User
-from app.main import app
-from app.routes import websocket as ws_module
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_REPO_ROOT / "tests"))
+from harness_safety import SENTINEL_EMAIL, preflight, print_banner  # noqa: E402
 
-# Force Redis client to use the refreshed URL.
+# Run preflight at conftest IMPORT time — before any ``app.*`` module
+# loads and potentially reads DATABASE_URL, opens a Redis client, or
+# connects to Postgres. pytest_configure is too late; by then the
+# module-level imports below have already fired.
+_PREFLIGHT_STATE = preflight()
+os.environ["DATABASE_URL"] = _PREFLIGHT_STATE["test_url"]
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+if "redis:6379" in os.environ.get("REDIS_URL", ""):  # compose-internal hostname
+    os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+os.environ.setdefault("ENVIRONMENT", "development")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Emit the banner once pytest has taken control of stderr."""
+    print_banner(_PREFLIGHT_STATE)
+
+
+# ---------------------------------------------------------------------------
+# App-layer imports — safe now that DATABASE_URL points at the test DB.
+# ---------------------------------------------------------------------------
+
+from app.core import db as core_db  # noqa: E402
+from app.core.auth_dep import current_user, require_csrf  # noqa: E402
+from app.core.db import get_db  # noqa: E402
+from app.core import redis as redis_mod  # noqa: E402,F401  (force module load)
+from app.db import Base, User  # noqa: E402
+from app.main import app  # noqa: E402
+from app.routes import websocket as ws_module  # noqa: E402
+
+# Force the Redis client to rebuild against the (now sane) URL.
 redis_mod._client = None  # type: ignore[attr-defined]
 
-DEFAULT_TEST_DB = (
-    "postgresql+psycopg://atlas:d85f54872734dfd0bba0c77f074dcaf0"
-    "@localhost:5432/atlas"
-)
-
-# When tests run on the host (outside the docker-compose network),
-# the service aliases ("redis", "postgres", "minio") don't resolve.
-# Default to localhost bindings so the M7 auth tests — which actually
-# hit Redis for sessions + rate limits — can function.
-# Setdefault over overwrite so env-var overrides from the shell still win.
-os.environ["REDIS_URL"] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-if "redis:6379" in os.environ["REDIS_URL"]:  # compose-internal hostname
-    os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-os.environ.setdefault("DATABASE_URL", DEFAULT_TEST_DB)
-
-# Ensure settings re-read the env we just set; the @lru_cache on
-# get_settings means a stale instance would hold the wrong URLs.
+# Re-read settings so the @lru_cache on get_settings doesn't hand back
+# an instance captured before pytest_configure rewrote DATABASE_URL.
 from app.core.config import get_settings  # noqa: E402
 get_settings.cache_clear()
 
@@ -70,24 +89,16 @@ TEST_USER_ID = UUID("99999999-9999-9999-9999-999999999999")
 TEST_USER_EMAIL = "test@atlas.test"
 
 
-def _engine_or_skip() -> Engine:
-    url = os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DB)
-    try:
-        engine = create_engine(url, pool_pre_ping=True)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return engine
-    except Exception as exc:
-        pytest.skip(f"Postgres not reachable at {url}: {exc}")
-
-
 @pytest.fixture(scope="session")
 def engine() -> Engine:
-    return _engine_or_skip()
+    url = os.environ["TEST_DATABASE_URL"]
+    return create_engine(url, pool_pre_ping=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema(engine: Engine) -> Iterator[None]:
+    # create_all is idempotent with init_test_db.py's schema; keep it
+    # here so adding a new model between inits doesn't fail mysteriously.
     Base.metadata.create_all(engine)
     yield
 
@@ -99,7 +110,7 @@ def _session_factory(engine: Engine) -> sessionmaker[Session]:
 
 @pytest.fixture(autouse=True)
 def _app_db_override(
-    _session_factory: sessionmaker[Session], monkeypatch
+    _session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """Wire the app's DB plumbing to the test engine for every test."""
 
@@ -126,12 +137,21 @@ def db(_session_factory: sessionmaker[Session]) -> Iterator[Session]:
         yield session
     finally:
         session.rollback()
-        # CASCADE handles sheets / elements / annotations / element_sources.
-        # Users live on a separate cleanup because drawings.owner_id is a
-        # RESTRICT FK to users — truncating drawings first lets us truncate
-        # users without tripping the constraint.
+        # Clear per-test state while preserving the harness sentinel.
+        # Ordering: drawings + projects first (users.drawings.owner_id
+        # and projects.created_by are RESTRICT FKs to users — deleting
+        # users before these would fail). TRUNCATE ... CASCADE on
+        # drawings + projects sweeps sheets, elements, element_sources,
+        # tiles, annotations, project_members along for free. Users
+        # then get a DELETE-except-sentinel so the sentinel survives.
         session.execute(
-            text("TRUNCATE drawings, users RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE drawings, projects RESTART IDENTITY CASCADE"
+            )
+        )
+        session.execute(
+            text("DELETE FROM users WHERE email <> :sentinel"),
+            {"sentinel": SENTINEL_EMAIL},
         )
         session.commit()
         session.close()

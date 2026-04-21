@@ -1,51 +1,53 @@
-"""Test config — env defaults for WorkerSettings + a Postgres ``db`` fixture.
+"""Test config — preflight + a Postgres ``db`` fixture.
 
-The ``db`` fixture connects to the same dev Postgres the docker stack
-uses (override via ``TEST_DATABASE_URL``). If unreachable, tests that
-ask for it are *skipped* rather than failed — keeps pure-function
-test runs in CI environments without Postgres painless. Each test
-truncates ``drawings RESTART IDENTITY CASCADE`` after itself so M2
-extraction tests are isolated.
+Connects only to ``TEST_DATABASE_URL``; there is no fallback to the
+live database. ``tests/harness_safety.py`` runs a layered preflight in
+``pytest_configure`` that refuses the session if the target DB can't
+be proven safe — see that module for the invariants.
+
+Each test truncates ``drawings RESTART IDENTITY CASCADE`` at teardown
+so M2 extraction tests are isolated. The worker suite does *not*
+touch ``users`` (unlike the api suite, which also clears users
+between tests while preserving the harness sentinel).
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_REPO_ROOT / "tests"))
+from harness_safety import preflight, print_banner  # noqa: E402
+
+# Run preflight at conftest IMPORT time — worker settings are loaded
+# from env at import time by the modules that tests exercise, so the
+# safety check has to land first.
+_PREFLIGHT_STATE = preflight()
+os.environ["DATABASE_URL"] = _PREFLIGHT_STATE["test_url"]
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
-os.environ.setdefault(
-    "DATABASE_URL",
-    "postgresql+psycopg://atlas:d85f54872734dfd0bba0c77f074dcaf0"
-    "@localhost:5432/atlas",
-)
 os.environ.setdefault("S3_BUCKET", "atlas-test")
 os.environ.setdefault("S3_ACCESS_KEY", "test")
 os.environ.setdefault("S3_SECRET_KEY", "test")
 os.environ.setdefault("S3_ENDPOINT_URL", "http://localhost:9000")
+os.environ.setdefault("ENVIRONMENT", "development")
 
 
-def _engine_or_skip() -> Engine:
-    url = os.environ.get(
-        "TEST_DATABASE_URL", os.environ["DATABASE_URL"]
-    )
-    try:
-        engine = create_engine(url, pool_pre_ping=True)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return engine
-    except Exception as exc:
-        pytest.skip(f"Postgres not reachable at {url}: {exc}")
+def pytest_configure(config: pytest.Config) -> None:
+    print_banner(_PREFLIGHT_STATE)
 
 
 @pytest.fixture(scope="session")
 def engine() -> Engine:
-    return _engine_or_skip()
+    url = os.environ["TEST_DATABASE_URL"]
+    return create_engine(url, pool_pre_ping=True)
 
 
 @pytest.fixture(scope="session")
