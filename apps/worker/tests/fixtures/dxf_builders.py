@@ -354,6 +354,117 @@ def build_explicit_and_derived_room_floor(path: Path) -> Path:
     return path
 
 
+def build_apartment_grid_floor(path: Path) -> Path:
+    """Rich 2×3 apartment grid: 13 walls, 3 doors, 2 windows, 6 derivable rooms.
+
+    The smallest plan this repo has that clears the ≥10-wall threshold
+    some downstream consumers (notably 3D reconstruction acceptance
+    tests) need in order to exercise multi-wall / multi-room code
+    paths end-to-end.
+
+    Layout (Y up, 18×12 footprint)::
+
+        +---+----+--------+-------+   y=12
+        | R1|    |   R2   |  R3   |
+        |   | wn |        | wn    |
+        +-D-+----+---D----+---D---+   y=6  (doors open to lower strip)
+        |                          |
+        | R4     |   R5    |  R6   |
+        |        |         |       |
+        +---+----+---------+-------+   y=0
+           x=6         x=12        x=18
+
+    Wall entity count (stored as individual LINEs so the connectivity
+    splitter has real vertices at every junction):
+
+    - South perimeter: 2 (split at x=9)
+    - North perimeter: 2 (split at x=9)
+    - East / West: 1 each
+    - Horizontal partition y=6: 3 (split at x=6 and x=12)
+    - Vertical partitions (top row): 2 (x=6, x=12, from y=6 to y=12)
+    - Vertical partitions (bottom row): 2 (x=6, x=12, from y=0 to y=6)
+
+    → 13 wall entities total.
+
+    Doors (3): centered on the y=6 partition, one per upper-room /
+    lower-room pair. Two are ARCs on ``A-DOOR`` (the classic CAD
+    hinged-door representation); the third is an INSERT of the
+    standard door block, so both extraction paths (G-R3 and the
+    raw-arc path) are exercised by a single fixture.
+
+    Windows (2): INSERTs of the window block on ``A-WIND``, sitting
+    on the north exterior between the top rooms.
+    """
+    doc = _new_doc()
+    door_block = _ensure_door_block(doc)
+    window_block = _ensure_window_block(doc)
+    msp = doc.modelspace()
+
+    # --- Exterior perimeter (split at midpoints so junctions are real) ---
+    for a, b in [
+        # South
+        ((0, 0), (9, 0)),
+        ((9, 0), (18, 0)),
+        # East
+        ((18, 0), (18, 12)),
+        # North
+        ((18, 12), (9, 12)),
+        ((9, 12), (0, 12)),
+        # West
+        ((0, 12), (0, 0)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-EXTR"})
+
+    # --- Horizontal partition at y=6, split at x=6 and x=12 ---
+    for a, b in [
+        ((0, 6), (6, 6)),
+        ((6, 6), (12, 6)),
+        ((12, 6), (18, 6)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-INTR"})
+
+    # --- Vertical partitions (top row between R1/R2/R3) ---
+    for a, b in [
+        ((6, 6), (6, 12)),
+        ((12, 6), (12, 12)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-INTR"})
+
+    # --- Vertical partitions (bottom row between R4/R5/R6) ---
+    for a, b in [
+        ((6, 0), (6, 6)),
+        ((12, 0), (12, 6)),
+    ]:
+        msp.add_line(a, b, dxfattribs={"layer": "A-WALL-INTR"})
+
+    # --- Doors on the y=6 partition ---
+    # R1 ↔ R4 (ARC-style door).
+    msp.add_arc(
+        center=(3, 6), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+    # R2 ↔ R5 (ARC-style door).
+    msp.add_arc(
+        center=(9, 6), radius=1, start_angle=0, end_angle=90,
+        dxfattribs={"layer": "A-DOOR"},
+    )
+    # R3 ↔ R6 (INSERT-style door, exercises the block-ref path).
+    msp.add_blockref(
+        door_block, insert=(15, 6), dxfattribs={"layer": "A-DOOR"}
+    )
+
+    # --- Windows on the north exterior wall ---
+    msp.add_blockref(
+        window_block, insert=(3, 12), dxfattribs={"layer": "A-WIND"}
+    )
+    msp.add_blockref(
+        window_block, insert=(15, 12), dxfattribs={"layer": "A-WIND"}
+    )
+
+    doc.saveas(str(path))
+    return path
+
+
 def build_spline_wall_floor(path: Path) -> Path:
     """10×8 floor whose north wall is a SPLINE bowing upward.
 
