@@ -41,7 +41,16 @@ Monorepo at `/opt/atlas`. Python services share a workspace; the web app is a se
   - `jobs/extract.py` — DXF → `StructuredSheet`.
   - `extractors/` — DXF, NCS layer classification, geometry helpers, validation.
   - `pipeline/` — shared PDF / raster / tile utilities.
-- **`apps/web`** — Next.js 14 app-router. Protected area under `app/(protected)/{drawings,projects,me}`. Client talks to FastAPI through same-origin proxy via `lib/api.ts` (client) + `lib/api-server.ts` (SSR). Three.js viewer components in `components/viewer/`.
+- **`apps/web`** — Next.js 14 app-router. Protected area under `app/(protected)/{app,drawings,projects,me}`. Client talks to FastAPI through same-origin proxy via `lib/api.ts` (client) + `lib/api-server.ts` (SSR). Three.js viewer components in `components/viewer/`.
+
+### URL convention for V2 app surfaces
+
+All new V1 (and V2+) routes live under `/app/*`:
+
+- **Frontend:** `/app`, `/app/kitchens/[id]`, `/app/projects/[id]`, etc.
+- **Backend:** `/app/kitchens/...` matches 1:1 so URLs read the same on the client, in the proxy rewrite, and in the FastAPI router.
+
+Legacy routes at root (`/drawings`, `/projects`, `/me`) stay put for now but will be reframed or moved under `/app/*` in later sessions. New work always uses `/app/*`.
 
 ## Key components (where to look first)
 
