@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -14,10 +14,18 @@ const jetbrains = JetBrains_Mono({
   display: "swap",
 });
 
+// Warm serif for marketing headlines. Used only via font-display on
+// hero + scroll-narrative section headings; body stays in Inter.
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Atlas — Architecture that checks itself",
+  title: "Atlas — On your side when you build",
   description:
-    "Atlas ingests construction documents and reasons over them — structured drawings, coordination checks, and design-intent reviews for AEC teams.",
+    "Describe your project in plain words. Get plans, 3D walkthroughs, real costs, and code checks — without hiring an architect or getting rolled by a contractor.",
   applicationName: "Atlas",
   robots: { index: true, follow: true },
 };
@@ -34,7 +42,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
+    <html
+      lang="en"
+      className={`${inter.variable} ${jetbrains.variable} ${fraunces.variable}`}
+    >
       <body className="min-h-screen bg-bg-base font-sans text-text-primary antialiased">
         {children}
       </body>
