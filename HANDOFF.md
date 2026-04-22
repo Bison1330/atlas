@@ -1,3 +1,8 @@
+> ⚠️ **Historical document.** This handoff describes Atlas's pre-V2 direction
+> and is preserved for context only. The current product vision is in
+> `docs/product-vision.md` (v2.0, homeowner/tenant focus). Do not treat
+> anything below as current guidance.
+
 # HANDOFF
 
 Working doc for resuming work on Atlas across chat sessions. If you're a new Claude chat picking this up — read this top-to-bottom before touching the code.
