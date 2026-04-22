@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text as sa_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -484,6 +485,18 @@ class Project(TimestampMixin, Base):
             "description IS NULL OR char_length(description) BETWEEN 1 AND 2000",
             name="ck_projects_description_len",
         ),
+        CheckConstraint(
+            "project_type IS NULL OR project_type IN ("
+            "'kitchen_remodel','kitchen_new','bathroom',"
+            "'retail_fitout','small_office','addition','other')",
+            name="ck_projects_project_type",
+        ),
+        CheckConstraint(
+            "lifecycle_state IS NULL OR lifecycle_state IN ("
+            "'brief_drafting','brief_complete','generating','designing',"
+            "'priced','quoted','archived')",
+            name="ck_projects_lifecycle_state",
+        ),
         Index("ix_projects_created_by", "created_by"),
     )
 
@@ -496,6 +509,14 @@ class Project(TimestampMixin, Base):
         PgUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+    # V1 kitchen pivot: projects are the primary container, and
+    # project_type drives onboarding + which pipeline to run. Nullable
+    # so existing M8 project rows migrate cleanly; the API sets it on
+    # every new project.
+    project_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    lifecycle_state: Mapped[str | None] = mapped_column(
+        String(30), nullable=True, server_default="brief_drafting",
     )
 
     creator: Mapped[User] = relationship()
@@ -530,6 +551,107 @@ class ProjectMember(Base):
 
     project: Mapped[Project] = relationship()
     user: Mapped[User] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# V1 kitchen design system — intake (see docs/v1-kitchen-architecture.md)
+# ---------------------------------------------------------------------------
+
+
+_BRIEF_STATUSES = ("drafting", "complete", "superseded")
+_BRIEF_ROLES = ("user", "assistant", "system")
+
+
+class KitchenBrief(TimestampMixin, Base):
+    """Structured intake for a kitchen project (S1).
+
+    One brief per project at a time is `drafting` or `complete`.
+    Refinement (S9) creates a new brief pointing at the prior row
+    via ``superseded_by``, so the chain is explicit and auditable —
+    schema matches the v2.0 refinement-versioning decision.
+
+    ``extracted_fields`` is the accumulated JSON state the intake
+    LLM builds up turn-by-turn; the message-level deltas live on
+    :class:`KitchenBriefMessage.extracted_delta` for audit.
+    """
+
+    __tablename__ = "kitchen_briefs"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {_BRIEF_STATUSES}",
+            name="ck_kitchen_briefs_status",
+        ),
+        Index("ix_kitchen_briefs_project_id", "project_id"),
+        Index("ix_kitchen_briefs_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="drafting",
+    )
+    superseded_by: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("kitchen_briefs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    extracted_fields: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=sa_text("'{}'::jsonb"),
+    )
+
+    project: Mapped[Project] = relationship()
+    messages: Mapped[list["KitchenBriefMessage"]] = relationship(
+        back_populates="brief",
+        cascade="all, delete-orphan",
+        order_by="KitchenBriefMessage.created_at",
+    )
+
+
+class KitchenBriefMessage(Base):
+    """One turn of the intake conversation.
+
+    Deliberately no ``updated_at`` (messages are immutable once
+    recorded; edits would create a new row). ``extracted_delta`` is
+    nullable because user turns carry no structured extraction — it's
+    the assistant's ``update_brief`` tool calls that populate it.
+    """
+
+    __tablename__ = "kitchen_brief_messages"
+    __table_args__ = (
+        CheckConstraint(
+            f"role IN {_BRIEF_ROLES}",
+            name="ck_kitchen_brief_messages_role",
+        ),
+        Index(
+            "ix_kitchen_brief_messages_brief_id",
+            "brief_id", "created_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    brief_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("kitchen_briefs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(String, nullable=False)
+    extracted_delta: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+    brief: Mapped[KitchenBrief] = relationship(back_populates="messages")
 
 
 class Annotation(TimestampMixin, Base):

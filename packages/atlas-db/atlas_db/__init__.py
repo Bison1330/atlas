@@ -6,6 +6,8 @@ from atlas_db.models import (
     Drawing,
     Element,
     ElementSource,
+    KitchenBrief,
+    KitchenBriefMessage,
     Project,
     ProjectMember,
     Sheet,
@@ -19,6 +21,8 @@ __all__ = [
     "Drawing",
     "Element",
     "ElementSource",
+    "KitchenBrief",
+    "KitchenBriefMessage",
     "Project",
     "ProjectMember",
     "Sheet",
@@ -27,4 +31,4 @@ __all__ = [
     "User",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
