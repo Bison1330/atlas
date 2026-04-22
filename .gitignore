@@ -52,3 +52,7 @@ logs/
 *.pem
 *.key
 !infra/**/*.example
+
+# Dev-machine scratch
+.claude/
+backups/
