@@ -28,9 +28,10 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.sessions import read_session, touch_session
-from app.db import Drawing, User
+from app.db import Drawing, Project, User
 from app.schemas.errors import APIError
 from app.services import auth as auth_svc
+from app.services import projects as projects_svc
 
 
 def current_user(
@@ -128,3 +129,31 @@ def owned_drawing_for_write(
 ) -> Drawing:
     """Path-param resolver: owner-only write access; 409 on unclaimed."""
     return auth_svc.drawing_writable_by(db, drawing_id, user)
+
+
+def owned_project_for_read(
+    project_id: UUID,
+    user: Annotated[User, Depends(current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Project:
+    """Path-param resolver: 404 unless caller is a project member.
+
+    Wraps :func:`app.services.projects.get_project_readable_by`; the
+    404-on-not-member policy (vs 403) matches drawings — we don't
+    leak existence of projects the caller isn't in.
+    """
+    return projects_svc.get_project_readable_by(db, project_id, user)
+
+
+def owned_project_for_write(
+    project_id: UUID,
+    user: Annotated[User, Depends(current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Project:
+    """Path-param resolver: caller must be a project member to write.
+
+    Flat-membership policy from M8 — any member may write. Role-gated
+    writes arrive with M8.1; until then this is the same check as
+    read.
+    """
+    return projects_svc.get_project_readable_by(db, project_id, user)
