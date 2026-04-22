@@ -225,6 +225,58 @@ class TestHappyPath:
         # Fake saw the full history on the last call.
         assert len(fake.recorded_turns[-1]) == 9  # 5 user + 4 assistant turns so far
 
+    def test_opus_failure_rolls_back_project_and_brief(self, db):
+        """If the first Opus call raises, no rows are committed.
+
+        Catches the "orphan empty project on startup failure" class
+        of bug. Uses ``raise_server_exceptions=False`` so the
+        TestClient returns 500 instead of re-raising into the test,
+        matching what a real client would see — and lets us assert
+        on both the HTTP status and the DB state in one shot.
+        """
+        from fastapi.testclient import TestClient
+
+        from app.db import KitchenBrief as KBModel
+        from app.db import Project as ProjectModel
+
+        class RaisingIntake:
+            def send_turn(self, messages):
+                raise RuntimeError(
+                    "anthropic transient 502 (simulated)"
+                )
+
+        app.dependency_overrides[_get_kitchen_intake] = RaisingIntake
+        try:
+            with TestClient(app, raise_server_exceptions=False) as tclient:
+                r = tclient.post(
+                    "/app/kitchens",
+                    json={
+                        "project_type": "kitchen_remodel",
+                        "initial_message": "remodel please",
+                    },
+                )
+            assert r.status_code == 500, r.text
+        finally:
+            app.dependency_overrides.pop(_get_kitchen_intake, None)
+
+        # Neither a Project nor a Brief was committed.
+        from sqlalchemy import func as sa_func
+        from sqlalchemy import select
+
+        project_count = db.execute(
+            select(sa_func.count()).select_from(ProjectModel)
+            .where(ProjectModel.created_by == TEST_USER_ID)
+        ).scalar_one()
+        brief_count = db.execute(
+            select(sa_func.count()).select_from(KBModel)
+        ).scalar_one()
+        assert project_count == 0, (
+            f"expected zero projects after rollback, got {project_count}"
+        )
+        assert brief_count == 0, (
+            f"expected zero briefs after rollback, got {brief_count}"
+        )
+
     def test_message_after_complete_returns_409(self, client, with_intake, db):
         with_intake([
             IntakeTurnResult(

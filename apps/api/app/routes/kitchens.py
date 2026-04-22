@@ -38,7 +38,7 @@ from app.core.auth_dep import (
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.rate_limit import check_and_increment
-from app.db import KitchenBrief, KitchenBriefMessage, Project, User
+from app.db import KitchenBrief, KitchenBriefMessage, Project, ProjectMember, User
 from app.schemas.errors import APIError, ServiceError
 from app.services import projects as projects_svc
 from app.services.kitchen_intake import (
@@ -389,35 +389,55 @@ def start_kitchen(
         )
 
     project_name = body.name or _derive_project_name(body.initial_message)
-    project = projects_svc.create_project(
-        db, name=project_name, description=None, creator=user,
-    )
-    project.project_type = body.project_type
-    project.lifecycle_state = "brief_drafting"
-    db.add(project)
 
-    brief = KitchenBrief(
-        id=uuid4(),
-        project_id=project.id,
-        status="drafting",
-        extracted_fields={},
-    )
-    db.add(brief)
-    db.flush()
+    # Build Project + membership + Brief + first user message + call
+    # Opus + apply the result, all inside a single DB transaction.
+    # Not using ``projects_svc.create_project`` here because that
+    # service helper commits internally — we need the create + first
+    # Opus turn to be atomic so a 5xx from Anthropic doesn't leave
+    # an orphan empty project behind.
+    try:
+        project = Project(
+            name=project_name,
+            description=None,
+            created_by=user.id,
+            project_type=body.project_type,
+            lifecycle_state="brief_drafting",
+        )
+        db.add(project)
+        db.flush()
+        db.add(ProjectMember(project_id=project.id, user_id=user.id))
 
-    db.add(KitchenBriefMessage(
-        id=uuid4(),
-        brief_id=brief.id,
-        role="user",
-        content=body.initial_message,
-    ))
-    db.flush()
+        brief = KitchenBrief(
+            id=uuid4(),
+            project_id=project.id,
+            status="drafting",
+            extracted_fields={},
+        )
+        db.add(brief)
+        db.flush()
 
-    history = _intake_messages(_load_messages(db, brief.id))
-    result = intake.send_turn(history)
-    _apply_intake_result(db, brief, project, result)
+        db.add(KitchenBriefMessage(
+            id=uuid4(),
+            brief_id=brief.id,
+            role="user",
+            content=body.initial_message,
+        ))
+        db.flush()
 
-    db.commit()
+        history = _intake_messages(_load_messages(db, brief.id))
+        result = intake.send_turn(history)
+        _apply_intake_result(db, brief, project, result)
+
+        db.commit()
+    except Exception:
+        # Any failure between the first ``db.add`` and the final
+        # ``db.commit`` rolls back the whole transaction — Opus 5xxs,
+        # Anthropic rate-limits, transient DB hiccups. The client
+        # can retry cleanly on a fresh slate.
+        db.rollback()
+        raise
+
     db.refresh(project)
     db.refresh(brief)
 
