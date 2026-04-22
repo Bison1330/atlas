@@ -39,5 +39,6 @@ export const config = {
     "/me/:path*",
     "/drawings/:path*",
     "/upload/:path*",
+    "/app/:path*",
   ],
 };

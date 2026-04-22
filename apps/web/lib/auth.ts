@@ -32,13 +32,14 @@ export function isSafeRedirect(target: string | undefined | null): boolean {
 
 /** Resolve a safe redirect target or return the fallback.
  *
- * Default fallback is ``/drawings`` — that's the logged-in workspace
- * landing (where users actually go to do work). ``/me`` is the
- * profile page, rarely the intended destination after a sign-in.
+ * Default fallback is ``/app`` — the V1 authenticated homepage with
+ * the chat composer. (Pre-v1, this was ``/drawings``; the older
+ * drawings index is still reachable via the upload flow, but the
+ * default landing is the kitchen-centric homepage.)
  */
 export function safeNextPath(
   target: string | undefined | null,
-  fallback: string = "/drawings",
+  fallback: string = "/app",
 ): string {
   return isSafeRedirect(target) ? (target as string) : fallback;
 }

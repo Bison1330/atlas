@@ -589,6 +589,127 @@ export async function assignDrawingToProject(
 }
 
 
+// ---------- V1: kitchen intake (Session 1) ----------
+
+
+export type KitchenProjectType = "kitchen_remodel" | "kitchen_new";
+
+
+export interface KitchenProjectShort {
+  id: string;
+  name: string;
+  project_type: string | null;
+  lifecycle_state: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface KitchenBrief {
+  id: string;
+  project_id: string;
+  status: "drafting" | "complete" | "superseded";
+  extracted_fields: Record<string, unknown>;
+  superseded_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+export interface KitchenMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  extracted_delta: Record<string, unknown> | null;
+  created_at: string;
+}
+
+
+export interface KitchenStartResponse {
+  project: KitchenProjectShort;
+  brief: KitchenBrief;
+  atlas_response: string;
+  extracted_fields: Record<string, unknown>;
+  is_complete: boolean;
+}
+
+
+export interface KitchenMessageResponse {
+  atlas_response: string;
+  extracted_fields: Record<string, unknown>;
+  extracted_delta: Record<string, unknown> | null;
+  is_complete: boolean;
+}
+
+
+export interface KitchenDetailResponse {
+  project: KitchenProjectShort;
+  brief: KitchenBrief;
+  messages: KitchenMessage[];
+  extracted_fields: Record<string, unknown>;
+  is_complete: boolean;
+}
+
+
+export interface KitchenListResponse {
+  projects: KitchenProjectShort[];
+}
+
+
+export async function startKitchenProject(
+  body: {
+    project_type: KitchenProjectType;
+    initial_message: string;
+    name?: string;
+  },
+  signal?: AbortSignal,
+): Promise<KitchenStartResponse> {
+  const res = await fetchApi("/app/kitchens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function sendKitchenMessage(
+  projectId: string,
+  body: { content: string },
+  signal?: AbortSignal,
+): Promise<KitchenMessageResponse> {
+  const res = await fetchApi(`/app/kitchens/${projectId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function getKitchen(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<KitchenDetailResponse> {
+  const res = await fetchApi(`/app/kitchens/${projectId}`, { signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
+export async function listKitchens(
+  signal?: AbortSignal,
+): Promise<KitchenListResponse> {
+  const res = await fetchApi("/app/kitchens", { signal });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+
+
 // ---------- M7: auth ----------
 
 
