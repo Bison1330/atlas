@@ -1,11 +1,12 @@
 # V1 Kitchen Design System — Status
 
 Plan: `docs/v1-kitchen-plan.md`
+Architecture: `docs/v1-kitchen-architecture.md`
 Last updated: 2026-04-22
 
 ## Sessions
 
-- Session 0 (Research + architecture) — NOT STARTED
+- Session 0 (Research + architecture) — COMPLETE — Architecture committed. OR-Tools CP-SAT, Claude Opus/Sonnet, Replicate for renders (Schnell vs SDXL benchmark in S7), Craftsman for cost data pending license. Six risks registered with mitigations.
 - Session 1 (Chat homepage + intake) — NOT STARTED
 - Session 2 (Constraint library + jurisdiction lookup) — NOT STARTED
 - Session 3a (Generation engine: solver) — NOT STARTED
